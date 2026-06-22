@@ -1,0 +1,12 @@
+{
+  "extends": "../tsconfig.base.json",
+  "compilerOptions": {
+    "ignoreDeprecations": "6.0",
+    "composite": false,
+    "declaration": false,
+    "noEmit": true,
+    "lib": ["ES2021"],
+    "jsx": "react-jsx"
+  },
+  "include": ["types/**/*", "constants/**/*"]
+}

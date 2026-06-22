@@ -1,0 +1,288 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "mysql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id            String         @id @default(cuid())
+  phone         String         @unique
+  name          String?
+  role          UserRole       @default(CUSTOMER)
+  isActive      Boolean        @default(true)
+  createdAt     DateTime       @default(now())
+  updatedAt     DateTime       @updatedAt
+  admin         Admin?
+  customer      Customer?
+  driver        Driver?
+  refreshTokens RefreshToken[]
+  dataRequests  DataRequest[]
+
+  @@index([phone])
+  @@map("users")
+}
+
+model RefreshToken {
+  id        String   @id @default(cuid())
+  token     String   @unique @db.VarChar(500)
+  userId    String
+  deviceId  String?
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@map("refresh_tokens")
+}
+
+model OtpCode {
+  id        String    @id @default(cuid())
+  phone     String
+  code      String
+  attempts  Int       @default(0)
+  expiresAt DateTime
+  usedAt    DateTime?
+  createdAt DateTime  @default(now())
+
+  @@index([phone, code])
+  @@map("otp_codes")
+}
+
+model Customer {
+  id        String   @id @default(cuid())
+  userId    String   @unique
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  trips     Trip[]
+
+  @@map("customers")
+}
+
+model Driver {
+  id                     String             @id @default(cuid())
+  userId                 String             @unique
+  vehicleType            VehicleType
+  licensePlate           String?
+  vehiclePhoto           String?            @db.VarChar(500)
+  idCardPhoto            String?            @db.VarChar(500)
+  isApproved             Boolean            @default(false)
+  isOnline               Boolean            @default(false)
+  nightMode              Boolean            @default(false)
+  lastLocation           String?            @db.LongText
+  totalTrips             Int                @default(0)
+  // Section 4E: Expo push token, used as a wake-up channel for job offers
+  // when the driver's Socket.io connection has died (backgrounded app)
+  pushToken              String?            @db.VarChar(500)
+  // Section 4A: subscription model - rolling period, starts at approval
+  subscriptionStatus     SubscriptionStatus @default(EXPIRED)
+  subscriptionPeriodEnd  DateTime?
+  lastPaymentReference   String?            @db.VarChar(255)
+  lastPaymentVerifiedBy  String?
+  lastPaymentVerifiedAt  DateTime?
+  // Section 4B: branch assignment - nullable since the initial branch
+  // list isn't decided yet; existing drivers get backfilled to a single
+  // bootstrap branch (see migration), new drivers get assigned at approval
+  branchId               String?
+  createdAt              DateTime           @default(now())
+  updatedAt              DateTime           @updatedAt
+  user                   User               @relation(fields: [userId], references: [id], onDelete: Cascade)
+  branch                 Branch?            @relation(fields: [branchId], references: [id])
+  trips                  Trip[]
+  paymentSubmissions     PaymentSubmission[]
+
+  @@index([isOnline, vehicleType, isApproved])
+  @@index([isOnline, nightMode, vehicleType])
+  @@index([subscriptionStatus])
+  @@index([branchId])
+  // Section 4D: covers findNearbyDrivers' actual filter set (dispatch.ts) -
+  // the query that runs on every single dispatch request
+  @@index([vehicleType, isApproved, isOnline, subscriptionStatus, subscriptionPeriodEnd])
+  @@map("drivers")
+}
+
+enum SubscriptionStatus {
+  ACTIVE
+  EXPIRED
+}
+
+// Section 4A: driver-submitted proof of subscription payment, pending
+// admin manual review (no automated MoMo verification in MVP)
+model PaymentSubmission {
+  id              String    @id @default(cuid())
+  driverId        String
+  reference       String    @db.VarChar(255)
+  screenshotUrl   String?   @db.VarChar(500)
+  status          String    @default("PENDING") // PENDING | APPROVED | REJECTED
+  reviewedBy      String?
+  reviewedAt      DateTime?
+  rejectionReason String?   @db.VarChar(500)
+  createdAt       DateTime  @default(now())
+  driver          Driver    @relation(fields: [driverId], references: [id], onDelete: Cascade)
+
+  @@index([driverId, status])
+  @@map("payment_submissions")
+}
+
+model Admin {
+  id          String    @id @default(cuid())
+  userId      String    @unique
+  totpSecret  String?   @db.VarChar(64)
+  totpEnabled Boolean   @default(false)
+  // Section 4B: branch structure - super admin has branchId = null
+  role        AdminRole @default(BRANCH_ADMIN)
+  branchId    String?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  user        User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  branch      Branch?   @relation(fields: [branchId], references: [id])
+
+  @@index([branchId])
+  @@map("admins")
+}
+
+enum AdminRole {
+  BRANCH_ADMIN
+  SUPER_ADMIN
+}
+
+// Section 4B: a branch = a geographic region/town with its own driver
+// roster and branch admin. Bootstrapped with one placeholder branch -
+// the real initial branch list is a business decision, not yet made
+// (see master plan Section 4B action items)
+model Branch {
+  id        String   @id @default(cuid())
+  name      String   @db.VarChar(100)
+  region    String   @db.VarChar(100)
+  createdAt DateTime @default(now())
+  admins    Admin[]
+  drivers   Driver[]
+
+  @@map("branches")
+}
+
+// Section 4B: full audit trail of admin actions - written on every
+// mutating admin route, regardless of which screen triggered it
+model AdminActionLog {
+  id              String   @id @default(cuid())
+  adminUserId     String
+  action          String   @db.VarChar(100)
+  targetRecordType String  @db.VarChar(50)
+  targetRecordId  String
+  branchId        String?
+  metadata        String?  @db.LongText // JSON-encoded before/after values
+  createdAt       DateTime @default(now())
+
+  @@index([adminUserId])
+  @@index([targetRecordType, targetRecordId])
+  @@index([branchId])
+  @@map("admin_action_logs")
+}
+
+// Section 4C: data access/deletion requests (Ghana Data Protection Act -
+// good practice and likely a legal expectation). Fulfillment is a manual
+// admin process in MVP, not automated erasure - this just gives users a
+// real path to invoke the request, and gives admins a queue to act on it.
+model DataRequest {
+  id          String   @id @default(cuid())
+  userId      String
+  type        String   @db.VarChar(20) // ACCESS | DELETION
+  status      String   @default("PENDING") // PENDING | COMPLETED
+  completedBy String?
+  completedAt DateTime?
+  createdAt   DateTime @default(now())
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([status])
+  @@map("data_requests")
+}
+
+model Trip {
+  id              String        @id @default(cuid())
+  customerId      String?
+  driverId        String?
+  vehicleType     VehicleType
+  serviceType     ServiceType   @default(PASSENGER)
+  deliveryType    DeliveryType?
+  itemDescription String?       @db.VarChar(500)
+  source          TripSource    @default(APP)
+  callerPhone     String?       @db.VarChar(20)
+  callerName      String?       @db.VarChar(100)
+  pickupLat       Float
+  pickupLng       Float
+  pickupAddress   String        @db.VarChar(500)
+  destLat         Float
+  destLng         Float
+  destAddress     String        @db.VarChar(500)
+  customerNote    String?       @db.VarChar(500)
+  distanceMeters  Int?
+  status          TripStatus    @default(REQUESTED)
+  cancelledBy     String?
+  cancelReason    String?       @db.VarChar(500)
+  createdAt       DateTime      @default(now())
+  updatedAt       DateTime      @updatedAt
+  acceptedAt      DateTime?
+  startedAt       DateTime?
+  completedAt     DateTime?
+  feedback        Feedback?
+  customer        Customer?     @relation(fields: [customerId], references: [id])
+  driver          Driver?       @relation(fields: [driverId], references: [id])
+
+  @@index([customerId])
+  @@index([driverId])
+  @@index([status])
+  @@index([source])
+  @@map("trips")
+}
+
+model Feedback {
+  id         String   @id @default(cuid())
+  tripId     String   @unique
+  rating     Int
+  fareRating String   // "fair" | "too_high" | "too_low"
+  issue      String?
+  createdAt  DateTime @default(now())
+  trip       Trip     @relation(fields: [tripId], references: [id])
+
+  @@map("feedback")
+}
+
+enum UserRole {
+  CUSTOMER
+  DRIVER
+  ADMIN
+}
+
+enum VehicleType {
+  MOTO
+  KEKE
+  MOTOR_KING
+}
+
+enum TripSource {
+  APP
+  CALL
+}
+
+enum ServiceType {
+  PASSENGER
+  DELIVERY
+}
+
+enum DeliveryType {
+  FOOD
+  GROCERIES
+  PARCELS
+  OTHER
+}
+
+enum TripStatus {
+  REQUESTED
+  ACCEPTED
+  ACTIVE
+  COMPLETED
+  CANCELLED
+}

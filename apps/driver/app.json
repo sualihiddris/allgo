@@ -1,0 +1,38 @@
+{
+  "expo": {
+    "name": "AllGO Driver",
+    "slug": "allgo-driver",
+    "version": "0.1.0",
+    "orientation": "portrait",
+    "userInterfaceStyle": "automatic",
+    "scheme": "allgo-driver",
+    "android": {
+      "package": "com.allgo.driver",
+      "config": {
+        "googleMaps": {
+          "apiKey": "REDACTED_GOOGLE_MAPS_API_KEY"
+        }
+      }
+    },
+    "ios": {
+      "bundleIdentifier": "com.allgo.driver",
+      "supportsTablet": false,
+      "config": {
+        "googleMapsApiKey": "REDACTED_GOOGLE_MAPS_API_KEY"
+      }
+    },
+    "plugins": [
+      "expo-router",
+      "expo-notifications"
+    ],
+    "extra": {
+      "router": {
+        "origin": false
+      },
+      "eas": {
+        "projectId": "d7110b3f-2962-4883-9928-29db677ce525"
+      }
+    },
+    "owner": "hajj-b"
+  }
+}

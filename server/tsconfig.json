@@ -1,0 +1,13 @@
+{
+  "extends": "../tsconfig.base.json",
+  "compilerOptions": {
+    "ignoreDeprecations": "5.0",
+    "target": "ES2021",
+    "module": "CommonJS",
+    "lib": ["ES2021"],
+    "outDir": "dist",
+    "rootDir": "..",
+    "noEmit": true
+  },
+  "include": ["src/**/*", "../shared/**/*"]
+}

@@ -1,0 +1,34 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --color-primary: rgb(249, 115, 22);
+  --color-primary-light: rgb(255, 212, 179);
+  --color-primary-pale: rgb(255, 240, 230);
+  --color-primary-dark: rgb(194, 65, 12);
+  --color-deep: rgb(124, 45, 18);
+  --color-background: rgb(255, 255, 255);
+  --color-text-primary: rgb(26, 26, 26);
+  --color-text-secondary: rgb(107, 114, 128);
+  --color-border: rgb(229, 229, 229);
+  --color-success: rgb(22, 163, 74);
+  --color-success-pale: rgb(220, 252, 231);
+  --color-warning: rgb(245, 158, 11);
+  --color-warning-pale: rgb(254, 243, 199);
+  --color-error: rgb(220, 38, 38);
+  --color-error-pale: rgb(254, 226, 226);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  background-color: var(--color-background);
+  color: var(--color-text-primary);
+}

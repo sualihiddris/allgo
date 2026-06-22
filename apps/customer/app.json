@@ -1,0 +1,37 @@
+{
+  "expo": {
+    "name": "AllGO",
+    "slug": "allgo-customer",
+    "version": "0.1.0",
+    "orientation": "portrait",
+    "userInterfaceStyle": "automatic",
+    "scheme": "allgo-customer",
+    "android": {
+      "package": "com.allgo.customer",
+      "config": {
+        "googleMaps": {
+          "apiKey": "REDACTED_GOOGLE_MAPS_API_KEY"
+        }
+      }
+    },
+    "ios": {
+      "bundleIdentifier": "com.allgo.customer",
+      "supportsTablet": false,
+      "config": {
+        "googleMapsApiKey": "REDACTED_GOOGLE_MAPS_API_KEY"
+      }
+    },
+    "plugins": [
+      "expo-router"
+    ],
+    "extra": {
+      "router": {
+        "origin": false
+      },
+      "eas": {
+        "projectId": "c7ecedef-9dcd-4bf5-b318-9c44db99d4c0"
+      }
+    },
+    "owner": "hajj-b"
+  }
+}

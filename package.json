@@ -1,0 +1,20 @@
+{
+  "name": "allgo",
+  "version": "0.1.0",
+  "private": true,
+  "packageManager": "npm@10",
+  "workspaces": [
+    "apps/*",
+    "server",
+    "shared"
+  ],
+  "engines": {
+    "node": ">=18"
+  },
+  "scripts": {
+    "lint": "npm run lint --workspaces --if-present",
+    "test": "npm run test --workspaces --if-present",
+    "typecheck": "npm run typecheck --workspaces --if-present",
+    "build": "npm run build --workspaces --if-present"
+  }
+}

@@ -1,0 +1,13 @@
+{
+  "name": "@allgo/mobile-shared",
+  "version": "0.1.0",
+  "private": true,
+  "files": [
+    "styles"
+  ],
+  "types": "./styles/shadows.ts",
+  "license": "UNLICENSED",
+  "peerDependencies": {
+    "react-native": "0.74.0"
+  }
+}

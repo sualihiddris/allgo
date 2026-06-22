@@ -1,0 +1,210 @@
+import { useState, useRef, useEffect } from "react";
+import {
+  View,
+  Text,
+  TextInput,
+  TouchableOpacity,
+  StyleSheet,
+  Alert,
+  KeyboardAvoidingView,
+  Platform,
+} from "react-native";
+import { router, useLocalSearchParams } from "expo-router";
+import { driverAuthService } from "../../services";
+import { useDriverStore } from "../../store";
+import { COLORS, SPACING } from "../../constants/config";
+
+const OTP_LENGTH = 6;
+
+export default function OtpScreen() {
+  const { phone } = useLocalSearchParams<{ phone: string }>();
+  const [otp, setOtp] = useState<string[]>(Array(OTP_LENGTH).fill(""));
+  const [isLoading, setIsLoading] = useState(false);
+  const [countdown, setCountdown] = useState(60);
+  const inputRefs = useRef<(TextInput | null)[]>([]);
+  const { login } = useDriverStore();
+
+  useEffect(() => {
+    if (countdown > 0) {
+      const timer = setTimeout(() => setCountdown(countdown - 1), 1000);
+      return () => clearTimeout(timer);
+    }
+  }, [countdown]);
+
+  const handleChange = (text: string, index: number) => {
+    const newOtp = [...otp];
+    newOtp[index] = text;
+    setOtp(newOtp);
+
+    if (text && index < OTP_LENGTH - 1) {
+      inputRefs.current[index + 1]?.focus();
+    }
+
+    if (newOtp.every((d) => d) && newOtp.join("").length === OTP_LENGTH) {
+      handleVerify(newOtp.join(""));
+    }
+  };
+
+  const handleKeyPress = (key: string, index: number) => {
+    if (key === "Backspace" && !otp[index] && index > 0) {
+      inputRefs.current[index - 1]?.focus();
+    }
+  };
+
+  const handleVerify = async (code: string) => {
+    if (!phone) return;
+    
+    setIsLoading(true);
+    try {
+      const result = await driverAuthService.verifyOtp(phone, code);
+      login(result.data.user);
+
+      if (result.data.user.isNewUser || !result.data.user.name) {
+        router.replace("/(auth)/profile-setup");
+      } else {
+        router.replace("/(main)/home");
+      }
+    } catch (error) {
+      Alert.alert("Error", (error as Error).message);
+      setOtp(Array(OTP_LENGTH).fill(""));
+      inputRefs.current[0]?.focus();
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const handleResend = async () => {
+    if (!phone || countdown > 0) return;
+    
+    try {
+      await driverAuthService.requestOtp(phone);
+      setCountdown(60);
+      Alert.alert("Success", "New code sent!");
+    } catch (error) {
+      Alert.alert("Error", (error as Error).message);
+    }
+  };
+
+  return (
+    <KeyboardAvoidingView
+      style={styles.container}
+      behavior={Platform.OS === "ios" ? "padding" : "height"}
+    >
+      <View style={styles.content}>
+        <Text style={styles.title}>Verify your number</Text>
+        <Text style={styles.subtitle}>
+          Enter the 6-digit code sent to {phone}
+        </Text>
+
+        <View style={styles.otpContainer}>
+          {otp.map((digit, index) => (
+            <TextInput
+              key={index}
+              ref={(ref) => (inputRefs.current[index] = ref)}
+              style={[styles.otpInput, digit ? styles.otpInputFilled : null]}
+              value={digit}
+              onChangeText={(text) => handleChange(text, index)}
+              onKeyPress={({ nativeEvent }) =>
+                handleKeyPress(nativeEvent.key, index)
+              }
+              keyboardType="number-pad"
+              maxLength={1}
+              selectTextOnFocus
+              autoFocus={index === 0}
+            />
+          ))}
+        </View>
+
+        <TouchableOpacity
+          style={[styles.button, isLoading && styles.buttonDisabled]}
+          onPress={() => handleVerify(otp.join(""))}
+          disabled={isLoading || otp.join("").length !== OTP_LENGTH}
+        >
+          <Text style={styles.buttonText}>
+            {isLoading ? "Verifying..." : "Verify"}
+          </Text>
+        </TouchableOpacity>
+
+        <TouchableOpacity
+          onPress={handleResend}
+          disabled={countdown > 0}
+          style={styles.resendButton}
+        >
+          <Text
+            style={[styles.resendText, countdown > 0 && styles.resendDisabled]}
+          >
+            {countdown > 0 ? `Resend code in ${countdown}s` : "Resend code"}
+          </Text>
+        </TouchableOpacity>
+      </View>
+    </KeyboardAvoidingView>
+  );
+}
+
+const styles = StyleSheet.create({
+  container: {
+    flex: 1,
+    backgroundColor: COLORS.background,
+  },
+  content: {
+    flex: 1,
+    padding: SPACING.lg,
+    justifyContent: "center",
+  },
+  title: {
+    fontSize: 28,
+    fontWeight: "bold",
+    color: COLORS.text,
+    marginBottom: SPACING.sm,
+  },
+  subtitle: {
+    fontSize: 16,
+    color: COLORS.textSecondary,
+    marginBottom: SPACING.xl,
+  },
+  otpContainer: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    marginBottom: SPACING.xl,
+  },
+  otpInput: {
+    width: 48,
+    height: 56,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    borderRadius: 12,
+    fontSize: 24,
+    textAlign: "center",
+    color: COLORS.text,
+  },
+  otpInputFilled: {
+    borderColor: COLORS.primary,
+    backgroundColor: COLORS.surface,
+  },
+  button: {
+    backgroundColor: COLORS.primary,
+    paddingVertical: SPACING.md,
+    borderRadius: 12,
+    alignItems: "center",
+    marginBottom: SPACING.lg,
+  },
+  buttonDisabled: {
+    backgroundColor: COLORS.disabled,
+  },
+  buttonText: {
+    color: COLORS.textInverse,
+    fontSize: 16,
+    fontWeight: "600",
+  },
+  resendButton: {
+    alignItems: "center",
+    padding: SPACING.sm,
+  },
+  resendText: {
+    color: COLORS.primary,
+    fontSize: 14,
+  },
+  resendDisabled: {
+    color: COLORS.textSecondary,
+  },
+});

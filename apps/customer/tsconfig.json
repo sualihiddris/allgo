@@ -1,0 +1,15 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "ignoreDeprecations": "5.0",
+    "jsx": "react-jsx",
+    "lib": ["ES2021"],
+    "strict": true,
+    "baseUrl": ".",
+    "skipLibCheck": true,
+    "paths": {
+      "@/*": ["src/*"]
+    }
+  },
+  "include": ["src/**/*", "*.d.ts", "src/**/*.d.ts", "expo-router.d.ts"]
+}
