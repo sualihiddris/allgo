@@ -25,13 +25,17 @@ export default function ProfileScreen() {
     );
   };
 
+  const showComingSoon = (feature: string) => {
+    Alert.alert(feature, "This is coming in a future update.");
+  };
+
   const menuItems = [
-    { icon: "👤", label: "Edit Profile", onPress: () => {} },
-    { icon: "🏍️", label: "Vehicle Details", onPress: () => {} },
-    { icon: "📄", label: "Documents", onPress: () => {} },
+    { icon: "👤", label: "Edit Profile", onPress: () => router.push("/(main)/edit-profile") },
+    { icon: "🏍️", label: "Vehicle Details", onPress: () => router.push("/(main)/vehicle-details") },
+    { icon: "📄", label: "Documents", onPress: () => showComingSoon("Documents") },
     { icon: "💳", label: "Subscription", onPress: () => router.push("/(main)/subscription") },
-    { icon: "📞", label: "Support", onPress: () => {} },
-    { icon: "📋", label: "Terms & Privacy", onPress: () => {} },
+    { icon: "📞", label: "Support", onPress: () => showComingSoon("Support") },
+    { icon: "📋", label: "Terms & Privacy", onPress: () => showComingSoon("Terms & Privacy") },
   ];
 
   const getVerificationBadge = () => {

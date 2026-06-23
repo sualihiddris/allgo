@@ -74,6 +74,10 @@ export default function MainLayout() {
           tabBarIcon: ({ focused }: { focused: boolean }) => <TabIcon name="profile" focused={focused} />,
         }}
       />
+      <Tabs.Screen
+        name="edit-profile"
+        options={{ href: null }}
+      />
     </Tabs>
   );
 }

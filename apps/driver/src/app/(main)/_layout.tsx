@@ -54,6 +54,18 @@ export default function MainLayout() {
           }}
         />
         <Tabs.Screen
+          name="edit-profile"
+          options={{
+            href: null, // Hidden from tab bar — navigated to programmatically
+          }}
+        />
+        <Tabs.Screen
+          name="vehicle-details"
+          options={{
+            href: null, // Hidden from tab bar — navigated to programmatically
+          }}
+        />
+        <Tabs.Screen
           name="profile"
           options={{
             title: "Profile",

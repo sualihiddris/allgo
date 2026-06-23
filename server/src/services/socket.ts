@@ -33,6 +33,11 @@ interface AuthenticatedSocket extends Socket {
   // Dispatch (services/dispatch.ts) keys everything off Driver.id, so the
   // driver's socket must join/be matched on that id, not the User id.
   driverId?: string;
+  // Resolves once the driver-room join (async DB lookup) below has
+  // finished setting driverId - handlers that need driverId await this
+  // instead of dropping events that arrive in the brief window right
+  // after connect, before the lookup completes.
+  driverRoomReady?: Promise<void>;
 }
 
 let ioInstance: Server | null = null;
@@ -98,29 +103,41 @@ export async function setupSocketIO(httpServer: HTTPServer): Promise<Server> {
     }
   });
 
-  io.on("connection", async (socket: AuthenticatedSocket) => {
+  io.on("connection", (socket: AuthenticatedSocket) => {
     console.log(`✅ Socket connected: ${socket.id} (User: ${socket.userId})`);
 
     // Driver joins their room - keyed by Driver.id, matching how dispatch
-    // addresses drivers everywhere else (see services/dispatch.ts)
-    if (socket.role === "DRIVER") {
-      const driver = await prisma.driver.findUnique({ where: { userId: socket.userId } });
-      if (driver) {
-        socket.driverId = driver.id;
-        socket.join(`driver:${driver.id}`);
+    // addresses drivers everywhere else (see services/dispatch.ts). This
+    // is fired (not awaited) here, and all socket.on(...) listeners below
+    // are registered synchronously regardless of when it resolves - a
+    // location ping sent immediately on connect was previously dropped
+    // with no listener to receive it at all, because this lookup used to
+    // be awaited inline before any listener got registered. Handlers that
+    // depend on socket.driverId (e.g. driver:location below) await
+    // driverRoomReady instead, so a ping arriving in this brief window is
+    // processed once the lookup resolves rather than silently dropped.
+    socket.driverRoomReady = (async () => {
+      if (socket.role === "DRIVER") {
+        const driver = await prisma.driver.findUnique({ where: { userId: socket.userId } });
+        if (driver) {
+          socket.driverId = driver.id;
+          socket.join(`driver:${driver.id}`);
+        }
       }
-    }
 
-    // Customer joins their room
-    if (socket.role === "CUSTOMER") {
-      socket.join(`customer:${socket.userId}`);
-    }
+      // Customer joins their room
+      if (socket.role === "CUSTOMER") {
+        socket.join(`customer:${socket.userId}`);
+      }
+    })();
 
     /**
      * Driver updates their location
      */
     socket.on("driver:location", async (data: { lat: number; lng: number; heading?: number; speed?: number }) => {
       if (socket.role !== "DRIVER") return;
+      await socket.driverRoomReady;
+      if (!socket.driverId) return;
 
       try {
         await updateDriverLocation(socket.driverId!, data.lat, data.lng);

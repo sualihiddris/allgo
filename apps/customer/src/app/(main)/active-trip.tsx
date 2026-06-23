@@ -20,7 +20,7 @@ import {
   Share,
   Alert,
 } from "react-native";
-import { useRouter } from "expo-router";
+import { useRouter, Redirect } from "expo-router";
 import { useBookingStore } from "../../store/bookingStore";
 import { socketService, DriverLocation } from "../../services/socket";
 import { CustomerTheme } from "../../constants/config";
@@ -49,17 +49,18 @@ export default function ActiveTripScreen() {
   const [lastUpdate, setLastUpdate] = useState<Date | null>(null);
 
   useEffect(() => {
+    // No currentTrip is handled declaratively via <Redirect> in the render
+    // body below - navigating imperatively here (router.replace) raced
+    // against the Root Layout's own mount, intermittently crashing with
+    // "Attempted to navigate before mounting the Root Layout component."
     if (!currentTrip) {
-      router.replace("/(main)/home");
       return;
     }
 
     initializeTracking();
 
     return () => {
-      if (currentTrip) {
-        socketService.stopTracking(currentTrip.id);
-      }
+      socketService.stopTracking(currentTrip.id);
     };
   }, [currentTrip?.id]);
 
@@ -161,11 +162,7 @@ export default function ActiveTripScreen() {
   };
 
   if (!currentTrip) {
-    return (
-      <View style={styles.container}>
-        <ActivityIndicator size="large" color={theme.primary} />
-      </View>
-    );
+    return <Redirect href="/(main)/home" />;
   }
 
   const statusInfo = STATUS_LABELS[currentTrip.status] || STATUS_LABELS.REQUESTED;

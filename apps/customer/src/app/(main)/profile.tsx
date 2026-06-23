@@ -36,13 +36,20 @@ export default function ProfileScreen() {
     );
   };
 
+  const showComingSoon = (feature: string) => {
+    Alert.alert(feature, "This is coming in a future update.");
+  };
+
+  // Loyalty/rewards/referral are explicitly out of MVP scope (master plan
+  // Section 1) and "Saved Places" has no backing feature built yet - all
+  // three were removed rather than left as dead taps. Support and Terms &
+  // Privacy don't have content yet either, but unlike those three they're
+  // real, planned features - they get an honest "coming soon" instead of
+  // a silent no-op.
   const menuItems = [
-    { icon: "👤", label: "Edit Profile", onPress: () => {} },
-    { icon: "🏠", label: "Saved Places", onPress: () => {} },
-    { icon: "⭐", label: "Loyalty & Rewards", onPress: () => {} },
-    { icon: "🎁", label: "Refer a Friend", onPress: () => {} },
-    { icon: "📞", label: "Support", onPress: () => {} },
-    { icon: "📄", label: "Terms & Privacy", onPress: () => {} },
+    { icon: "👤", label: "Edit Profile", onPress: () => router.push("/(main)/edit-profile") },
+    { icon: "📞", label: "Support", onPress: () => showComingSoon("Support") },
+    { icon: "📄", label: "Terms & Privacy", onPress: () => showComingSoon("Terms & Privacy") },
   ];
 
   return (
@@ -57,14 +64,6 @@ export default function ProfileScreen() {
           </View>
           <Text style={styles.name}>{user?.name || "User"}</Text>
           <Text style={styles.phone}>{user?.phone}</Text>
-          
-          {user?.customer && (
-            <View style={styles.loyaltyBadge}>
-              <Text style={styles.loyaltyTier}>
-                {user.customer.loyaltyTier} • {user.customer.loyaltyPoints} pts
-              </Text>
-            </View>
-          )}
         </View>
 
         {/* Appearance */}
@@ -151,18 +150,6 @@ function createStyles(theme: CustomerTheme) {
     fontSize: 14,
     color: theme.textSecondary,
     marginTop: 4,
-  },
-  loyaltyBadge: {
-    backgroundColor: theme.accent,
-    paddingHorizontal: SPACING.md,
-    paddingVertical: SPACING.xs,
-    borderRadius: 20,
-    marginTop: SPACING.md,
-  },
-  loyaltyTier: {
-    fontSize: 12,
-    fontWeight: "600",
-    color: theme.text,
   },
   section: {
     paddingHorizontal: SPACING.lg,
