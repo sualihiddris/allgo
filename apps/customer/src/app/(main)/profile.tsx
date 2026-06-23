@@ -41,15 +41,14 @@ export default function ProfileScreen() {
   };
 
   // Loyalty/rewards/referral are explicitly out of MVP scope (master plan
-  // Section 1) and "Saved Places" has no backing feature built yet - all
-  // three were removed rather than left as dead taps. Support and Terms &
-  // Privacy don't have content yet either, but unlike those three they're
-  // real, planned features - they get an honest "coming soon" instead of
-  // a silent no-op.
+  // Section 1) and "Saved Places" has no backing feature built yet - both
+  // were removed rather than left as dead taps. Support doesn't have
+  // content yet either, but unlike those it's a real, planned feature -
+  // it gets an honest "coming soon" instead of a silent no-op.
   const menuItems = [
     { icon: "👤", label: "Edit Profile", onPress: () => router.push("/(main)/edit-profile") },
     { icon: "📞", label: "Support", onPress: () => showComingSoon("Support") },
-    { icon: "📄", label: "Terms & Privacy", onPress: () => showComingSoon("Terms & Privacy") },
+    { icon: "📄", label: "Terms & Privacy", onPress: () => router.push("/(main)/terms-privacy") },
   ];
 
   return (

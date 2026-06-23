@@ -78,6 +78,10 @@ export default function MainLayout() {
         name="edit-profile"
         options={{ href: null }}
       />
+      <Tabs.Screen
+        name="terms-privacy"
+        options={{ href: null }}
+      />
     </Tabs>
   );
 }

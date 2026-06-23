@@ -66,6 +66,12 @@ export default function MainLayout() {
           }}
         />
         <Tabs.Screen
+          name="terms-privacy"
+          options={{
+            href: null, // Hidden from tab bar — navigated to programmatically
+          }}
+        />
+        <Tabs.Screen
           name="profile"
           options={{
             title: "Profile",

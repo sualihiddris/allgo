@@ -35,7 +35,7 @@ export default function ProfileScreen() {
     { icon: "📄", label: "Documents", onPress: () => showComingSoon("Documents") },
     { icon: "💳", label: "Subscription", onPress: () => router.push("/(main)/subscription") },
     { icon: "📞", label: "Support", onPress: () => showComingSoon("Support") },
-    { icon: "📋", label: "Terms & Privacy", onPress: () => showComingSoon("Terms & Privacy") },
+    { icon: "📋", label: "Terms & Privacy", onPress: () => router.push("/(main)/terms-privacy") },
   ];
 
   const getVerificationBadge = () => {

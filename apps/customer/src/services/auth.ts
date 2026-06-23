@@ -168,6 +168,27 @@ class AuthService {
     }
   }
 
+  // Section 4C data access/deletion request - fulfillment is a manual
+  // admin process in MVP, this just creates a real, trackable request
+  async submitDataRequest(type: "ACCESS" | "DELETION"): Promise<{ success: boolean; message: string }> {
+    try {
+      const response = await this.authenticatedFetch(`${API_BASE_URL}/auth/me/data-request`, {
+        method: "POST",
+        body: JSON.stringify({ type }),
+      });
+      const data = await response.json();
+      if (!response.ok) {
+        throw new Error(data.error?.message || "Failed to submit request");
+      }
+      return { success: true, message: data.data.message };
+    } catch (error) {
+      return {
+        success: false,
+        message: error instanceof Error ? error.message : "Failed to submit request",
+      };
+    }
+  }
+
   async logout(): Promise<void> {
     try {
       const refreshToken = await storage.getItem(REFRESH_TOKEN_KEY);
