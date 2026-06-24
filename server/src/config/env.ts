@@ -18,6 +18,7 @@ const envSchema = z.object({
   // External services
   ARKESEL_API_KEY: z.string().optional(),
   GOOGLE_MAPS_API_KEY: z.string().optional(),
+  SENTRY_DSN: z.string().optional(),
   
   // Rate limiting
   OTP_RATE_LIMIT_WINDOW_MS: z.coerce.number().default(3600000), // 1 hour

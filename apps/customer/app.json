@@ -30,7 +30,8 @@
       },
       "eas": {
         "projectId": "c7ecedef-9dcd-4bf5-b318-9c44db99d4c0"
-      }
+      },
+      "sentryDsn": "https://db99b0db95e87279d93132ab85fd13d8@o4511614933860352.ingest.us.sentry.io/4511615014338560"
     },
     "owner": "hajj-b"
   }

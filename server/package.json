@@ -20,6 +20,7 @@
   "dependencies": {
     "@allgo/shared": "file:../shared",
     "@prisma/client": "^5.11.0",
+    "@sentry/node": "^10.60.0",
     "@socket.io/redis-adapter": "^8.3.0",
     "bullmq": "^5.0.0",
     "cors": "^2.8.5",

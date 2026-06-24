@@ -4,6 +4,7 @@ import helmet from "helmet";
 import morgan from "morgan";
 
 import { env } from "./config";
+import { Sentry } from "./config/sentry";
 import { errorHandler, notFoundHandler, requestId, generalRateLimit } from "./middleware";
 import { apiRouter } from "./routes";
 
@@ -45,7 +46,10 @@ export function createApp(): Application {
     });
   });
 
-  // Error handling
+  // Error handling - Sentry's handler must come before our own errorHandler
+  // so it sees the error first (it re-throws via next(err) to pass it
+  // along); a no-op if SENTRY_DSN isn't set, since Sentry.init() never ran
+  Sentry.setupExpressErrorHandler(app);
   app.use(notFoundHandler);
   app.use(errorHandler);
 

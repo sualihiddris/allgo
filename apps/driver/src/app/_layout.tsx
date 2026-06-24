@@ -2,8 +2,21 @@ import { useEffect } from "react";
 import { Stack } from "expo-router";
 import { StatusBar } from "expo-status-bar";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import * as Sentry from "@sentry/react-native";
+import Constants from "expo-constants";
 import { useDriverStore } from "../store";
 import notificationService from "../services/notifications";
+
+// Error tracking - skipped entirely if no DSN is configured (e.g. a
+// local/forked build without one set in app.json's extra.sentryDsn)
+const sentryDsn = Constants.expoConfig?.extra?.sentryDsn;
+if (sentryDsn) {
+  Sentry.init({
+    dsn: sentryDsn,
+    environment: __DEV__ ? "development" : "production",
+    tracesSampleRate: __DEV__ ? 1.0 : 0.1,
+  });
+}
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -14,7 +27,7 @@ const queryClient = new QueryClient({
   },
 });
 
-export default function RootLayout() {
+function RootLayout() {
   const { initialize, isInitialized, isAuthenticated } = useDriverStore();
 
   useEffect(() => {
@@ -45,3 +58,5 @@ export default function RootLayout() {
     </QueryClientProvider>
   );
 }
+
+export default Sentry.wrap(RootLayout);
