@@ -55,13 +55,29 @@ export function requireSuperAdmin(req: Request, res: Response, next: NextFunctio
 }
 
 /**
+ * Resolves which single branch (if any) this request should be scoped to:
+ * a branch admin is always scoped to their own branch; a super admin sees
+ * everything by default but can opt into one branch via ?branchId=, e.g.
+ * for the Drivers/Subscriptions/Customers/Deliveries admin list pages.
+ * Returns undefined when there's no scoping to apply (super admin, no
+ * branchId query param).
+ */
+export function resolveBranchFilter(req: Request): string | undefined {
+  if (req.admin?.role === "SUPER_ADMIN") {
+    return (req.query.branchId as string) || undefined;
+  }
+  return req.admin?.branchId || undefined;
+}
+
+/**
  * For READ routes: a Prisma `where` fragment that restricts a branch admin
- * to their own branch's data. Super admin gets an empty fragment (no
- * restriction) - spread this into the route's existing where clause.
+ * to their own branch's data. Super admin gets an empty fragment unless
+ * they've opted into one branch via ?branchId= - spread this into the
+ * route's existing where clause.
  */
 export function branchReadScope(req: Request, branchField = "branchId"): Record<string, any> {
-  if (req.admin?.role === "SUPER_ADMIN") return {};
-  return { [branchField]: req.admin?.branchId };
+  const branchId = resolveBranchFilter(req);
+  return branchId ? { [branchField]: branchId } : {};
 }
 
 /**

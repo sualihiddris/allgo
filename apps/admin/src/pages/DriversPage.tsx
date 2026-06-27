@@ -4,8 +4,9 @@
  * Simplified: Driver approval workflow with isApproved flag
  */
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import axios from 'axios';
+import { BranchFilterSelect } from '../components';
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || '/api/v1';
 
@@ -41,28 +42,21 @@ export function DriversPage() {
   const [filteredDrivers, setFilteredDrivers] = useState<Driver[]>([]);
   const [filter, setFilter] = useState<'all' | 'pending' | 'approved'>('all');
   const [searchQuery, setSearchQuery] = useState('');
+  const [branchFilter, setBranchFilter] = useState('');
   const [isLoading, setIsLoading] = useState(true);
   const [processingIds, setProcessingIds] = useState<Set<string>>(new Set());
   const [activeTab, setActiveTab] = useState<'drivers' | 'feedback'>('drivers');
   const [feedbackSummary, setFeedbackSummary] = useState<DriverFeedbackSummary[]>([]);
   const [isLoadingFeedback, setIsLoadingFeedback] = useState(true);
 
-  useEffect(() => {
-    fetchDrivers();
-    fetchFeedbackSummary();
-  }, []);
-
-  useEffect(() => {
-    filterDrivers();
-  }, [drivers, filter, searchQuery]);
-
-  const fetchDrivers = async () => {
+  const fetchDrivers = useCallback(async () => {
     setIsLoading(true);
     try {
       const response = await axios.get(`${API_BASE_URL}/admin/drivers`, {
         headers: {
           Authorization: `Bearer ${localStorage.getItem('admin_access_token')}`,
         },
+        params: branchFilter ? { branchId: branchFilter } : {},
       });
       setDrivers(response.data.drivers || []);
     } catch (error) {
@@ -70,7 +64,19 @@ export function DriversPage() {
     } finally {
       setIsLoading(false);
     }
-  };
+  }, [branchFilter]);
+
+  useEffect(() => {
+    fetchDrivers();
+  }, [fetchDrivers]);
+
+  useEffect(() => {
+    fetchFeedbackSummary();
+  }, []);
+
+  useEffect(() => {
+    filterDrivers();
+  }, [drivers, filter, searchQuery]);
 
   const fetchFeedbackSummary = async () => {
     setIsLoadingFeedback(true);
@@ -191,6 +197,7 @@ export function DriversPage() {
           <p className="text-gray-500">Manage driver accounts and approval</p>
         </div>
         <div className="flex gap-4">
+          <BranchFilterSelect value={branchFilter} onChange={setBranchFilter} />
           <select
             className="border border-gray-300 rounded-lg px-4 py-2 focus:outline-none focus:ring-2 focus:ring-primary-500"
             value={filter}

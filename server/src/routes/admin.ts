@@ -7,7 +7,7 @@
 
 import { Router } from "express";
 import { requireAuth } from "../middleware/auth";
-import { requireAdmin, requireSuperAdmin, branchReadScope, assertBranchWriteAccess } from "../middleware/branchScope";
+import { requireAdmin, requireSuperAdmin, branchReadScope, resolveBranchFilter, assertBranchWriteAccess } from "../middleware/branchScope";
 import { prisma } from "../config/database";
 import { createTrip } from "../services/trip";
 import { findDriverWithExpansion, assignTripToDriver, isNightServiceHours } from "../services/dispatch";
@@ -27,6 +27,7 @@ const router = Router();
 router.get("/drivers", requireAuth, requireAdmin, async (req, res) => {
   try {
     const drivers = await prisma.driver.findMany({
+      where: branchReadScope(req),
       include: {
         user: {
           select: {
@@ -67,12 +68,21 @@ router.get("/drivers", requireAuth, requireAdmin, async (req, res) => {
  */
 router.get("/customers", requireAuth, requireAdmin, async (req, res) => {
   try {
+    // Customer has no branchId of its own (a customer isn't tied to one
+    // branch by nature) - scope via "has at least one trip with a driver
+    // from this branch" instead. Trip count is scoped the same way when a
+    // branch filter is active, so it doesn't show a lifetime total that
+    // includes trips from other branches alongside a branch-filtered list.
+    const branchId = resolveBranchFilter(req);
+    const tripBranchWhere = branchId ? { driver: { branchId } } : {};
+
     const customers = await prisma.customer.findMany({
+      where: branchId ? { trips: { some: tripBranchWhere } } : {},
       include: {
         user: {
           select: { id: true, name: true, phone: true, createdAt: true },
         },
-        _count: { select: { trips: true } },
+        _count: { select: { trips: { where: tripBranchWhere } } },
       },
       orderBy: { createdAt: "desc" },
     });
@@ -99,6 +109,7 @@ router.get("/customers", requireAuth, requireAdmin, async (req, res) => {
 router.get("/subscriptions", requireAuth, requireAdmin, async (req, res) => {
   try {
     const drivers = await prisma.driver.findMany({
+      where: branchReadScope(req),
       include: {
         user: { select: { name: true, phone: true } },
         paymentSubmissions: {
@@ -795,6 +806,17 @@ router.get("/trips", requireAuth, requireAdmin, async (req, res) => {
 
     // Build where clause
     const where: any = {};
+
+    // Trip has no branchId of its own - only derivable through whichever
+    // driver accepts it. A trip with no driver yet has no resolvable
+    // branch, so it's naturally excluded once this filter is applied
+    // (Prisma's relation filter only matches rows where the related
+    // driver exists and matches) - by design, not a bug: an unassigned
+    // delivery doesn't belong to a branch until someone accepts it.
+    const branchId = resolveBranchFilter(req);
+    if (branchId) {
+      where.driver = { branchId };
+    }
 
     if (status && status !== "ALL") {
       where.status = status;

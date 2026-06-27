@@ -4,8 +4,9 @@
  * Read-only directory of customer accounts - no editing in MVP
  */
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import axios from 'axios';
+import { BranchFilterSelect } from '../components';
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || '/api/v1';
 
@@ -20,19 +21,17 @@ interface Customer {
 export function CustomersPage() {
   const [customers, setCustomers] = useState<Customer[]>([]);
   const [searchQuery, setSearchQuery] = useState('');
+  const [branchFilter, setBranchFilter] = useState('');
   const [isLoading, setIsLoading] = useState(true);
 
-  useEffect(() => {
-    fetchCustomers();
-  }, []);
-
-  const fetchCustomers = async () => {
+  const fetchCustomers = useCallback(async () => {
     setIsLoading(true);
     try {
       const response = await axios.get(`${API_BASE_URL}/admin/customers`, {
         headers: {
           Authorization: `Bearer ${localStorage.getItem('admin_access_token')}`,
         },
+        params: branchFilter ? { branchId: branchFilter } : {},
       });
       setCustomers(response.data.customers || []);
     } catch (error) {
@@ -40,7 +39,9 @@ export function CustomersPage() {
     } finally {
       setIsLoading(false);
     }
-  };
+  }, [branchFilter]);
+
+  useEffect(() => { fetchCustomers(); }, [fetchCustomers]);
 
   const filteredCustomers = searchQuery
     ? customers.filter(
@@ -57,13 +58,16 @@ export function CustomersPage() {
           <h2 className="text-xl font-semibold text-gray-900">Customers</h2>
           <p className="text-gray-500">View customer accounts and trip activity</p>
         </div>
-        <input
-          type="search"
-          placeholder="Search customers..."
-          className="border border-gray-300 rounded-lg px-4 py-2 focus:outline-none focus:ring-2 focus:ring-primary-500"
-          value={searchQuery}
-          onChange={(e) => setSearchQuery(e.target.value)}
-        />
+        <div className="flex gap-2">
+          <BranchFilterSelect value={branchFilter} onChange={setBranchFilter} />
+          <input
+            type="search"
+            placeholder="Search customers..."
+            className="border border-gray-300 rounded-lg px-4 py-2 focus:outline-none focus:ring-2 focus:ring-primary-500"
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+          />
+        </div>
       </div>
 
       <div className="grid grid-cols-2 gap-4 mb-6">

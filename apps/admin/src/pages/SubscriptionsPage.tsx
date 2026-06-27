@@ -7,6 +7,7 @@
 
 import { useState, useEffect, useCallback } from 'react';
 import axios from 'axios';
+import { BranchFilterSelect } from '../components';
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || '/api/v1';
 
@@ -33,6 +34,7 @@ export function SubscriptionsPage() {
   const [drivers, setDrivers] = useState<DriverSubscription[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [filter, setFilter] = useState<'ALL' | 'ACTIVE' | 'EXPIRED' | 'PENDING'>('ALL');
+  const [branchFilter, setBranchFilter] = useState('');
   const [processingId, setProcessingId] = useState<string | null>(null);
 
   const authHeader = () => ({
@@ -44,6 +46,7 @@ export function SubscriptionsPage() {
     try {
       const { data } = await axios.get(`${API_BASE_URL}/admin/subscriptions`, {
         headers: authHeader(),
+        params: branchFilter ? { branchId: branchFilter } : {},
       });
       setDrivers(data.drivers || []);
     } catch (err) {
@@ -51,7 +54,7 @@ export function SubscriptionsPage() {
     } finally {
       setIsLoading(false);
     }
-  }, []);
+  }, [branchFilter]);
 
   useEffect(() => { fetchSubscriptions(); }, [fetchSubscriptions]);
 
@@ -111,16 +114,19 @@ export function SubscriptionsPage() {
           <h2 className="text-xl font-semibold text-gray-900">Subscriptions</h2>
           <p className="text-gray-500">Manual subscription verification (Section 4A)</p>
         </div>
-        <select
-          className="border border-gray-300 rounded-lg px-4 py-2 focus:outline-none focus:ring-2 focus:ring-primary-500"
-          value={filter}
-          onChange={(e) => setFilter(e.target.value as any)}
-        >
-          <option value="ALL">All Drivers</option>
-          <option value="PENDING">Pending Review</option>
-          <option value="ACTIVE">Active</option>
-          <option value="EXPIRED">Expired</option>
-        </select>
+        <div className="flex gap-2">
+          <BranchFilterSelect value={branchFilter} onChange={setBranchFilter} />
+          <select
+            className="border border-gray-300 rounded-lg px-4 py-2 focus:outline-none focus:ring-2 focus:ring-primary-500"
+            value={filter}
+            onChange={(e) => setFilter(e.target.value as any)}
+          >
+            <option value="ALL">All Drivers</option>
+            <option value="PENDING">Pending Review</option>
+            <option value="ACTIVE">Active</option>
+            <option value="EXPIRED">Expired</option>
+          </select>
+        </div>
       </div>
 
       <div className="grid grid-cols-3 gap-4 mb-6">

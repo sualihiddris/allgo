@@ -9,6 +9,8 @@
 
 import { useState, useEffect, useCallback } from 'react';
 import axios from 'axios';
+import { BranchFilterSelect } from '../components';
+import { useAuthStore } from '../store';
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || '/api/v1';
 
@@ -58,17 +60,21 @@ function timeAgo(dateStr: string): string {
 }
 
 export function DeliveriesPage() {
+  const { user } = useAuthStore();
+  const isSuperAdmin = user?.admin?.role === 'SUPER_ADMIN';
   const [deliveries, setDeliveries] = useState<Delivery[]>([]);
   const [pagination, setPagination] = useState<Pagination>({ page: 1, limit: 20, totalCount: 0, totalPages: 0 });
   const [isLoading, setIsLoading] = useState(true);
   const [typeFilter, setTypeFilter] = useState('ALL');
   const [statusFilter, setStatusFilter] = useState('ALL');
+  const [branchFilter, setBranchFilter] = useState('');
 
   const fetchDeliveries = useCallback(async (page = 1) => {
     setIsLoading(true);
     try {
       const params: Record<string, string> = { page: String(page), limit: '20', serviceType: 'DELIVERY' };
       if (statusFilter !== 'ALL') params.status = statusFilter;
+      if (branchFilter) params.branchId = branchFilter;
 
       const token = localStorage.getItem('admin_access_token');
       const { data } = await axios.get(`${API_BASE_URL}/admin/trips`, {
@@ -84,7 +90,7 @@ export function DeliveriesPage() {
     } finally {
       setIsLoading(false);
     }
-  }, [statusFilter, typeFilter]);
+  }, [statusFilter, typeFilter, branchFilter]);
 
   useEffect(() => { fetchDeliveries(1); }, [fetchDeliveries]);
 
@@ -123,6 +129,12 @@ export function DeliveriesPage() {
 
       <div className="bg-white rounded-xl shadow p-4 mb-6">
         <div className="flex flex-wrap items-end gap-3">
+          {isSuperAdmin && (
+            <div>
+              <label className="block text-xs font-medium text-gray-500 mb-1">Branch</label>
+              <BranchFilterSelect value={branchFilter} onChange={setBranchFilter} />
+            </div>
+          )}
           <div>
             <label className="block text-xs font-medium text-gray-500 mb-1">Status</label>
             <select value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)}
@@ -147,6 +159,11 @@ export function DeliveriesPage() {
             </select>
           </div>
         </div>
+        {(branchFilter || !isSuperAdmin) && (
+          <p className="mt-2 text-xs text-gray-400">
+            Unassigned deliveries (no driver yet) don't belong to a branch and won't appear while {isSuperAdmin ? 'a branch filter is active' : 'viewing your branch'}.
+          </p>
+        )}
       </div>
 
       <div className="bg-white rounded-xl overflow-hidden shadow">

@@ -2,4 +2,4 @@ export { errorHandler, notFoundHandler, createError, type ApiError } from "./err
 export { rateLimit, generalRateLimit, authRateLimit } from "./rateLimit";
 export { requestId } from "./requestId";
 export { requireAuth, requireRole, optionalAuth } from "./auth";
-export { requireAdmin, requireSuperAdmin, branchReadScope, assertBranchWriteAccess } from "./branchScope";
+export { requireAdmin, requireSuperAdmin, branchReadScope, resolveBranchFilter, assertBranchWriteAccess } from "./branchScope";
