@@ -32,16 +32,18 @@ export function DashboardLayout() {
 
   return (
     <div className="min-h-screen bg-gray-100">
-      {/* Sidebar */}
-      <aside className="fixed left-0 top-0 h-full w-64 bg-white border-r border-gray-200">
+      {/* Sidebar - flex column so the footer sits after the nav in normal
+          flow and can never overlap it; nav scrolls on its own if the list
+          ever outgrows the viewport (e.g. super admin's extra items) */}
+      <aside className="fixed left-0 top-0 h-full w-64 bg-white border-r border-gray-200 flex flex-col">
         {/* Logo */}
-        <div className="h-16 flex items-center px-6 border-b border-gray-200">
+        <div className="h-16 flex items-center px-6 border-b border-gray-200 shrink-0">
           <h1 className="text-xl font-bold text-primary-500">AllGo Admin</h1>
         </div>
 
         {/* Navigation */}
-        <nav className="p-4">
-          {visibleNavItems.map((item) => (
+        <nav className="flex-1 overflow-y-auto p-4">
+          {navItems.map((item) => (
             <Link
               key={item.path}
               to={item.path}
@@ -55,12 +57,35 @@ export function DashboardLayout() {
               <span className="font-medium">{item.label}</span>
             </Link>
           ))}
+
+          {isSuperAdmin && (
+            <>
+              <div className="my-3 px-4 flex items-center gap-2">
+                <span className="text-xs font-semibold text-gray-400 uppercase tracking-wide">Super Admin</span>
+                <div className="flex-1 h-px bg-gray-200" />
+              </div>
+              {superAdminNavItems.map((item) => (
+                <Link
+                  key={item.path}
+                  to={item.path}
+                  className={`flex items-center gap-3 px-4 py-3 rounded-lg mb-1 transition-colors ${
+                    location.pathname === item.path
+                      ? 'bg-primary-50 text-primary-600'
+                      : 'text-gray-600 hover:bg-gray-50'
+                  }`}
+                >
+                  <span className="text-lg">{item.icon}</span>
+                  <span className="font-medium">{item.label}</span>
+                </Link>
+              ))}
+            </>
+          )}
         </nav>
 
         {/* User */}
-        <div className="absolute bottom-0 left-0 right-0 p-4 border-t border-gray-200">
+        <div className="p-4 border-t border-gray-200 shrink-0">
           <div className="flex items-center gap-3 mb-3">
-            <div className="w-10 h-10 rounded-full bg-primary-500 flex items-center justify-center text-white font-bold">
+            <div className="w-10 h-10 rounded-full bg-primary-500 flex items-center justify-center text-white font-bold shrink-0">
               {user?.name?.charAt(0).toUpperCase() || 'A'}
             </div>
             <div className="flex-1 min-w-0">

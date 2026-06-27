@@ -104,8 +104,12 @@ export function AuditLogPage() {
                       {new Date(log.createdAt).toLocaleString()}
                     </td>
                     <td className="px-5 py-3 text-sm">
-                      <p className="font-medium text-gray-900">{log.admin?.name || 'Unknown'}</p>
-                      <p className="text-xs text-gray-500">{log.admin?.phone}</p>
+                      {/* Phone is always present and unambiguous; name isn't
+                          always set (e.g. an admin account created without
+                          ever filling one in) - fall back to phone as the
+                          primary label instead of a bare "Unknown" */}
+                      <p className="font-medium text-gray-900">{log.admin?.name || log.admin?.phone || 'Unknown'}</p>
+                      {log.admin?.name && <p className="text-xs text-gray-500">{log.admin.phone}</p>}
                     </td>
                     <td className="px-5 py-3">
                       <span className="inline-flex px-2 py-0.5 text-xs font-medium rounded-full bg-blue-100 text-blue-700">
@@ -113,10 +117,22 @@ export function AuditLogPage() {
                       </span>
                     </td>
                     <td className="px-5 py-3 text-sm text-gray-600">
-                      {log.targetRecordType} <span className="font-mono text-xs">{log.targetRecordId.slice(0, 8)}</span>
+                      {log.targetRecordType}
+                      <span className="ml-1.5 font-mono text-xs text-gray-400">#{log.targetRecordId.slice(0, 8)}</span>
                     </td>
-                    <td className="px-5 py-3 text-xs text-gray-500 font-mono max-w-xs truncate">
-                      {log.metadata ? JSON.stringify(log.metadata) : '—'}
+                    <td className="px-5 py-3 text-xs text-gray-500 max-w-xs">
+                      {log.metadata ? (
+                        <div className="space-y-0.5">
+                          {Object.entries(log.metadata).map(([key, value]) => (
+                            <div key={key} className="truncate">
+                              <span className="text-gray-400">{key.replace(/([A-Z])/g, ' $1').toLowerCase()}:</span>{' '}
+                              <span className="text-gray-700">{String(value)}</span>
+                            </div>
+                          ))}
+                        </div>
+                      ) : (
+                        '—'
+                      )}
                     </td>
                   </tr>
                 ))}
