@@ -349,8 +349,8 @@ export function CallInPage() {
             <div className="grid grid-cols-3 gap-3">
               {[
                 { type: 'MOTO', label: '🏍️ Moto', desc: '1 person' },
-                { type: 'KEKE', label: '🛺 Keke', desc: '1-3 people' },
-                { type: 'MOTOR_KING', label: '🚜 Motor King', desc: 'Cargo' },
+                { type: 'KEKE', label: '🛺 Keke / Pragya', desc: '1-3 people' },
+                { type: 'MOTOR_KING', label: '🚜 Aboboya', desc: 'Cargo' },
               ].map((v) => (
                 <button
                   key={v.type}

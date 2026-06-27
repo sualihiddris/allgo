@@ -32,8 +32,8 @@ interface DriverFeedbackSummary {
 
 const VEHICLE_INFO = {
   MOTO: { icon: '🏍️', label: 'Motorbike' },
-  KEKE: { icon: '🛺', label: 'Keke' },
-  MOTOR_KING: { icon: '🚚', label: 'Motor King' },
+  KEKE: { icon: '🛺', label: 'Keke / Pragya' },
+  MOTOR_KING: { icon: '🚚', label: 'Aboboya' },
 };
 
 export function DriversPage() {

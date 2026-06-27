@@ -17,8 +17,8 @@ export type VehicleType = (typeof VEHICLE_TYPES)[keyof typeof VEHICLE_TYPES];
 // Display names
 export const VEHICLE_DISPLAY_NAMES: Record<VehicleType, string> = {
   MOTO: "Motorbike",
-  KEKE: "Keke (Tricycle)",
-  MOTOR_KING: "Motor King",
+  KEKE: "Keke / Pragya",
+  MOTOR_KING: "Aboboya",
 };
 
 // Max passengers per vehicle

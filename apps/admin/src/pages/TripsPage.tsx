@@ -187,8 +187,8 @@ export function TripsPage() {
           <FilterSelect label="Vehicle" value={vehicleFilter} onChange={setVehicleFilter} options={[
             { value: 'ALL', label: 'All Vehicles' },
             { value: 'MOTO', label: '🏍️ Moto' },
-            { value: 'KEKE', label: '🛺 Keke' },
-            { value: 'MOTOR_KING', label: '🚚 Motor King' },
+            { value: 'KEKE', label: '🛺 Keke / Pragya' },
+            { value: 'MOTOR_KING', label: '🚚 Aboboya' },
           ]} />
           <div className="flex-1 min-w-[200px]">
             <label className="block text-xs font-medium text-gray-500 mb-1">Search</label>
