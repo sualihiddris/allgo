@@ -5,6 +5,7 @@
  */
 
 import { useState, useEffect, useCallback } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import axios from 'axios';
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || '/api/v1';
@@ -20,6 +21,12 @@ interface LogEntry {
   admin: { id: string; name: string | null; phone: string } | null;
 }
 
+interface BranchAdminOption {
+  userId: string;
+  name: string;
+  branch: { name: string } | null;
+}
+
 const ACTIONS = [
   'DRIVER_ADDED', 'DRIVER_APPROVED', 'DRIVER_REJECTED', 'DRIVER_REMOVED', 'DRIVER_REASSIGNED',
   'SUBSCRIPTION_MARKED_PAID', 'SUBSCRIPTION_PAYMENT_REJECTED',
@@ -27,20 +34,36 @@ const ACTIONS = [
 ];
 
 export function AuditLogPage() {
+  // adminUserId supports deep-linking from the Branches page ("View
+  // Activity" on a specific branch admin's row) as well as normal
+  // in-page filtering
+  const [searchParams, setSearchParams] = useSearchParams();
   const [logs, setLogs] = useState<LogEntry[]>([]);
+  const [admins, setAdmins] = useState<BranchAdminOption[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [actionFilter, setActionFilter] = useState('');
+  const [adminFilter, setAdminFilter] = useState(searchParams.get('adminUserId') || '');
   const [page, setPage] = useState(1);
   const [totalPages, setTotalPages] = useState(1);
+
+  const authHeader = () => ({ Authorization: `Bearer ${localStorage.getItem('admin_access_token')}` });
+
+  useEffect(() => {
+    axios
+      .get(`${API_BASE_URL}/admin/branch-admins`, { headers: authHeader() })
+      .then(({ data }) => setAdmins(data.admins || []))
+      .catch((err) => console.error('Failed to fetch branch admins for filter:', err));
+  }, []);
 
   const fetchLogs = useCallback(async (p = 1) => {
     setIsLoading(true);
     try {
       const params: Record<string, string> = { page: String(p), limit: '20' };
       if (actionFilter) params.action = actionFilter;
+      if (adminFilter) params.adminUserId = adminFilter;
 
       const { data } = await axios.get(`${API_BASE_URL}/admin/audit-log`, {
-        headers: { Authorization: `Bearer ${localStorage.getItem('admin_access_token')}` },
+        headers: authHeader(),
         params,
       });
       setLogs(data.logs || []);
@@ -51,9 +74,16 @@ export function AuditLogPage() {
     } finally {
       setIsLoading(false);
     }
-  }, [actionFilter]);
+  }, [actionFilter, adminFilter]);
 
   useEffect(() => { fetchLogs(1); }, [fetchLogs]);
+
+  const handleAdminFilterChange = (userId: string) => {
+    setAdminFilter(userId);
+    setSearchParams(userId ? { adminUserId: userId } : {});
+  };
+
+  const filteredAdminName = admins.find((a) => a.userId === adminFilter)?.name;
 
   return (
     <div>
@@ -62,17 +92,43 @@ export function AuditLogPage() {
           <h2 className="text-xl font-semibold text-gray-900">Audit Log</h2>
           <p className="text-gray-500">Complete history of admin actions across all branches</p>
         </div>
-        <select
-          value={actionFilter}
-          onChange={(e) => setActionFilter(e.target.value)}
-          className="border border-gray-300 rounded-lg px-4 py-2 text-sm"
-        >
-          <option value="">All Actions</option>
-          {ACTIONS.map((a) => (
-            <option key={a} value={a}>{a.replace(/_/g, ' ')}</option>
-          ))}
-        </select>
+        <div className="flex gap-2">
+          <select
+            value={adminFilter}
+            onChange={(e) => handleAdminFilterChange(e.target.value)}
+            className="border border-gray-300 rounded-lg px-4 py-2 text-sm"
+          >
+            <option value="">All Admins</option>
+            {admins.map((a) => (
+              <option key={a.userId} value={a.userId}>
+                {a.name}{a.branch ? ` (${a.branch.name})` : ''}
+              </option>
+            ))}
+          </select>
+          <select
+            value={actionFilter}
+            onChange={(e) => setActionFilter(e.target.value)}
+            className="border border-gray-300 rounded-lg px-4 py-2 text-sm"
+          >
+            <option value="">All Actions</option>
+            {ACTIONS.map((a) => (
+              <option key={a} value={a}>{a.replace(/_/g, ' ')}</option>
+            ))}
+          </select>
+        </div>
       </div>
+
+      {adminFilter && (
+        <div className="mb-4 flex items-center gap-2 text-sm text-gray-600">
+          Showing activity for <span className="font-medium text-gray-900">{filteredAdminName || '…'}</span>
+          <button
+            onClick={() => handleAdminFilterChange('')}
+            className="text-primary-600 hover:underline"
+          >
+            Clear
+          </button>
+        </div>
+      )}
 
       <div className="bg-white rounded-xl overflow-hidden shadow">
         {isLoading ? (
@@ -83,7 +139,7 @@ export function AuditLogPage() {
         ) : logs.length === 0 ? (
           <div className="text-center py-12 text-gray-500">
             <span className="text-4xl block mb-2">📋</span>
-            No actions logged yet
+            {adminFilter || actionFilter ? 'No matching actions' : 'No actions logged yet'}
           </div>
         ) : (
           <>

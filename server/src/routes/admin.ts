@@ -1102,7 +1102,11 @@ router.get("/branch-admins", requireAuth, requireAdmin, requireSuperAdmin, async
     res.json({
       admins: admins.map((a) => ({
         adminId: a.id,
-        name: a.user.name || "Unknown",
+        // userId (not adminId) is what AdminActionLog.adminUserId stores -
+        // the audit log's per-admin filter needs this, not the Admin
+        // table's own id
+        userId: a.userId,
+        name: a.user.name || a.user.phone,
         phone: a.user.phone,
         isActive: a.user.isActive,
         branch: a.branch,
@@ -1259,10 +1263,12 @@ router.get("/audit-log", requireAuth, requireAdmin, requireSuperAdmin, async (re
     const limit = Math.min(100, Math.max(1, parseInt(req.query.limit as string) || 50));
     const action = req.query.action as string | undefined;
     const branchId = req.query.branchId as string | undefined;
+    const adminUserId = req.query.adminUserId as string | undefined;
 
     const where: any = {};
     if (action) where.action = action;
     if (branchId) where.branchId = branchId;
+    if (adminUserId) where.adminUserId = adminUserId;
 
     const [logs, totalCount] = await Promise.all([
       prisma.adminActionLog.findMany({

@@ -6,6 +6,7 @@
  */
 
 import { useState, useEffect, useCallback } from 'react';
+import { Link } from 'react-router-dom';
 import axios from 'axios';
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || '/api/v1';
@@ -20,6 +21,7 @@ interface Branch {
 
 interface BranchAdmin {
   adminId: string;
+  userId: string;
   name: string;
   phone: string;
   isActive: boolean;
@@ -222,14 +224,22 @@ export function BranchesPage() {
                     </span>
                   </td>
                   <td className="px-4 py-2 text-right">
-                    {a.isActive && (
-                      <button
-                        onClick={() => handleDeactivate(a.adminId)}
-                        className="px-3 py-1 bg-gray-500 text-white text-xs rounded-lg hover:bg-gray-600"
+                    <div className="flex justify-end gap-2">
+                      <Link
+                        to={`/audit-log?adminUserId=${a.userId}`}
+                        className="px-3 py-1 bg-white border border-gray-300 text-gray-700 text-xs rounded-lg hover:bg-gray-50"
                       >
-                        Deactivate
-                      </button>
-                    )}
+                        View Activity
+                      </Link>
+                      {a.isActive && (
+                        <button
+                          onClick={() => handleDeactivate(a.adminId)}
+                          className="px-3 py-1 bg-gray-500 text-white text-xs rounded-lg hover:bg-gray-600"
+                        >
+                          Deactivate
+                        </button>
+                      )}
+                    </div>
                   </td>
                 </tr>
               ))}
