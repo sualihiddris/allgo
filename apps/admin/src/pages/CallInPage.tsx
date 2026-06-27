@@ -350,7 +350,7 @@ export function CallInPage() {
               {[
                 { type: 'MOTO', label: '🏍️ Moto', desc: '1 person' },
                 { type: 'KEKE', label: '🛺 Keke / Pragya', desc: '1-3 people' },
-                { type: 'MOTOR_KING', label: '🚜 Aboboya', desc: 'Cargo' },
+                { type: 'MOTOR_KING', label: '🛻 Aboboya', desc: 'Cargo' },
               ].map((v) => (
                 <button
                   key={v.type}

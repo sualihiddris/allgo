@@ -27,7 +27,7 @@ type VehicleType = "MOTO" | "KEKE" | "MOTOR_KING";
 const VEHICLE_OPTIONS: Array<{ type: VehicleType; icon: string; label: string; description: string }> = [
   { type: "MOTO", icon: "🏍️", label: "Motorbike", description: "For 1 passenger" },
   { type: "KEKE", icon: "🛺", label: "Keke / Pragya", description: "For up to 3 passengers" },
-  { type: "MOTOR_KING", icon: "🚚", label: "Aboboya", description: "For goods & cargo" },
+  { type: "MOTOR_KING", icon: "🛻", label: "Aboboya", description: "For goods & cargo" },
 ];
 
 export default function ProfileSetupScreen() {

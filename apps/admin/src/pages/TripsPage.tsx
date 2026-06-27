@@ -54,7 +54,7 @@ const STATUS_CONFIG: Record<string, { label: string; color: string; bg: string }
 const VEHICLE_ICONS: Record<string, string> = {
   MOTO: '🏍️',
   KEKE: '🛺',
-  MOTOR_KING: '🚚',
+  MOTOR_KING: '🛻',
 };
 
 const SOURCE_ICONS: Record<string, string> = { APP: '📱', CALL: '📞' };
@@ -188,7 +188,7 @@ export function TripsPage() {
             { value: 'ALL', label: 'All Vehicles' },
             { value: 'MOTO', label: '🏍️ Moto' },
             { value: 'KEKE', label: '🛺 Keke / Pragya' },
-            { value: 'MOTOR_KING', label: '🚚 Aboboya' },
+            { value: 'MOTOR_KING', label: '🛻 Aboboya' },
           ]} />
           <div className="flex-1 min-w-[200px]">
             <label className="block text-xs font-medium text-gray-500 mb-1">Search</label>

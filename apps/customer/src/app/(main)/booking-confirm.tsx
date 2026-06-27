@@ -11,7 +11,7 @@ import bookingService from "../../services/booking";
 const VEHICLE_INFO: Record<VehicleType, { icon: string; label: string; description: string }> = {
   MOTO: { icon: "🏍️", label: "Motorbike", description: "Quick ride for 1 person, or small delivery" },
   KEKE: { icon: "🛺", label: "Keke / Pragya", description: "Comfortable for up to 3 people" },
-  MOTOR_KING: { icon: "🚚", label: "Aboboya", description: "For goods & cargo" },
+  MOTOR_KING: { icon: "🛻", label: "Aboboya", description: "For goods & cargo" },
 };
 
 // MOTO service types

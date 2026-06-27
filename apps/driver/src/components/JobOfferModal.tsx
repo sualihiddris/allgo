@@ -35,7 +35,7 @@ const DELIVERY_ICONS = {
 const VEHICLE_ICONS = {
   MOTO: "🏍️",
   KEKE: "🛺",
-  MOTOR_KING: "🚚",
+  MOTOR_KING: "🛻",
 };
 
 export default function JobOfferModal({ visible, onAccept, onDecline }: JobOfferModalProps) {
