@@ -381,6 +381,16 @@ router.post(
  */
 router.get("/stats", requireAuth, requireAdmin, async (req, res) => {
   try {
+    // Section 4B: a branch admin's dashboard should reflect only their own
+    // branch, not system-wide totals - only the super admin sees everything.
+    // Driver counts filter by branchId directly; trip counts filter via the
+    // assigned driver's branch (unassigned trips excluded under scope, same
+    // precedent as Deliveries/active-trips); customer count has no branchId
+    // of its own, so it's derived the same way as the Customers page.
+    const branchId = resolveBranchFilter(req);
+    const driverWhere = branchId ? { branchId } : {};
+    const tripBranchWhere = branchId ? { driver: { branchId } } : {};
+
     const [
       totalDrivers,
       approvedDrivers,
@@ -393,13 +403,16 @@ router.get("/stats", requireAuth, requireAdmin, async (req, res) => {
       appTrips,
       callTrips,
     ] = await Promise.all([
-      prisma.driver.count(),
-      prisma.driver.count({ where: { isApproved: true } }),
-      prisma.driver.count({ where: { isOnline: true } }),
-      prisma.driver.count({ where: { nightMode: true, isOnline: true } }),
-      prisma.customer.count(),
+      prisma.driver.count({ where: driverWhere }),
+      prisma.driver.count({ where: { ...driverWhere, isApproved: true } }),
+      prisma.driver.count({ where: { ...driverWhere, isOnline: true } }),
+      prisma.driver.count({ where: { ...driverWhere, nightMode: true, isOnline: true } }),
+      branchId
+        ? prisma.customer.count({ where: { trips: { some: tripBranchWhere } } })
+        : prisma.customer.count(),
       prisma.trip.count({
         where: {
+          ...tripBranchWhere,
           status: {
             in: ["REQUESTED", "ACCEPTED", "ACTIVE"],
           },
@@ -407,16 +420,17 @@ router.get("/stats", requireAuth, requireAdmin, async (req, res) => {
       }),
       prisma.trip.count({
         where: {
+          ...tripBranchWhere,
           status: "COMPLETED",
           completedAt: {
             gte: new Date(new Date().setHours(0, 0, 0, 0)),
           },
         },
       }),
-      prisma.feedback.count(),
+      prisma.feedback.count({ where: branchId ? { trip: tripBranchWhere } : {} }),
       // Section 18: Count trips by source
-      prisma.trip.count({ where: { source: "APP" } }),
-      prisma.trip.count({ where: { source: "CALL" } }),
+      prisma.trip.count({ where: { ...tripBranchWhere, source: "APP" } }),
+      prisma.trip.count({ where: { ...tripBranchWhere, source: "CALL" } }),
     ]);
 
     res.json({
@@ -459,7 +473,10 @@ router.get("/stats", requireAuth, requireAdmin, async (req, res) => {
  */
 router.get("/drivers/feedback", requireAuth, requireAdmin, async (req, res) => {
   try {
+    const branchId = resolveBranchFilter(req);
+
     const feedback = await prisma.feedback.findMany({
+      where: branchId ? { trip: { driver: { branchId } } } : {},
       include: {
         trip: {
           include: {
@@ -723,8 +740,11 @@ router.get("/trips/call-in/:tripId/status", requireAuth, requireAdmin, async (re
  */
 router.get("/trips/active", requireAuth, requireAdmin, async (req, res) => {
   try {
+    const branchId = resolveBranchFilter(req);
+
     const activeTrips = await prisma.trip.findMany({
       where: {
+        ...(branchId ? { driver: { branchId } } : {}),
         status: {
           in: ["REQUESTED", "ACCEPTED", "ACTIVE"],
         },
