@@ -52,77 +52,77 @@ export function CustomersPage() {
     : customers;
 
   return (
-    <div>
-      <div className="flex items-center justify-between mb-6">
+    <div className="space-y-6">
+      <div className="flex flex-wrap items-end justify-between gap-4">
         <div>
-          <h2 className="text-xl font-semibold text-gray-900">Customers</h2>
-          <p className="text-gray-500">View customer accounts and trip activity</p>
+          <h1 className="text-2xl font-bold text-slate-900">Customers</h1>
+          <p className="mt-1 text-sm text-slate-500">View customer accounts and trip activity</p>
         </div>
         <div className="flex gap-2">
           <BranchFilterSelect value={branchFilter} onChange={setBranchFilter} />
           <input
             type="search"
-            placeholder="Search customers..."
-            className="border border-gray-300 rounded-lg px-4 py-2 focus:outline-none focus:ring-2 focus:ring-primary-500"
+            placeholder="Search customers…"
+            className="input w-56"
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
           />
         </div>
       </div>
 
-      <div className="grid grid-cols-2 gap-4 mb-6">
-        <div className="bg-white rounded-lg p-4 shadow">
-          <p className="text-2xl font-bold text-gray-900">{customers.length}</p>
-          <p className="text-sm text-gray-500">Total Customers</p>
+      <div className="grid grid-cols-2 gap-4">
+        <div className="card p-5">
+          <p className="text-3xl font-bold tracking-tight text-slate-900">{customers.length}</p>
+          <p className="mt-0.5 text-sm font-medium text-slate-500">Total Customers</p>
         </div>
-        <div className="bg-white rounded-lg p-4 shadow">
-          <p className="text-2xl font-bold text-primary-500">
+        <div className="card p-5">
+          <p className="text-3xl font-bold tracking-tight text-primary-600">
             {customers.reduce((sum, c) => sum + c.totalTrips, 0)}
           </p>
-          <p className="text-sm text-gray-500">Total Trips Booked</p>
+          <p className="mt-0.5 text-sm font-medium text-slate-500">Total Trips Booked</p>
         </div>
       </div>
 
-      <div className="bg-white rounded-xl overflow-hidden shadow">
+      <div className="card overflow-hidden">
         {isLoading ? (
-          <div className="text-center py-12 text-gray-500">
-            <span className="text-2xl block mb-2">⏳</span>
-            Loading customers...
+          <div className="flex flex-col items-center gap-3 py-16 text-slate-400">
+            <div className="h-7 w-7 animate-spin rounded-full border-2 border-slate-200 border-t-primary-500" />
+            <span className="text-sm font-medium">Loading customers…</span>
           </div>
         ) : (
-          <table className="w-full">
-            <thead className="bg-gray-50 border-b border-gray-200">
+          <table className="table-modern">
+            <thead>
               <tr>
-                <th className="text-left px-6 py-4 text-sm font-medium text-gray-500">Customer</th>
-                <th className="text-left px-6 py-4 text-sm font-medium text-gray-500">Phone</th>
-                <th className="text-left px-6 py-4 text-sm font-medium text-gray-500">Joined</th>
-                <th className="text-left px-6 py-4 text-sm font-medium text-gray-500">Total Trips</th>
+                <th>Customer</th>
+                <th>Phone</th>
+                <th>Joined</th>
+                <th>Total Trips</th>
               </tr>
             </thead>
-            <tbody className="divide-y divide-gray-200">
+            <tbody>
               {filteredCustomers.length === 0 ? (
                 <tr>
-                  <td colSpan={4} className="text-center py-12 text-gray-500">
-                    <span className="text-4xl block mb-2">👤</span>
-                    {searchQuery ? 'No customers found' : 'No customers registered yet'}
+                  <td colSpan={4} className="py-16 text-center">
+                    <span className="mb-2 block text-4xl">👤</span>
+                    <span className="text-sm text-slate-400">
+                      {searchQuery ? 'No customers found' : 'No customers registered yet'}
+                    </span>
                   </td>
                 </tr>
               ) : (
                 filteredCustomers.map((customer) => (
-                  <tr key={customer.id} className="hover:bg-gray-50">
-                    <td className="px-6 py-4">
+                  <tr key={customer.id}>
+                    <td>
                       <div className="flex items-center gap-3">
-                        <div className="w-10 h-10 bg-primary-100 rounded-full flex items-center justify-center text-primary-600 font-semibold">
+                        <div className="flex h-9 w-9 items-center justify-center rounded-full bg-primary-50 text-sm font-semibold text-primary-600">
                           {customer.name.charAt(0).toUpperCase()}
                         </div>
-                        <p className="font-medium text-gray-900">{customer.name}</p>
+                        <p className="font-semibold text-slate-900">{customer.name}</p>
                       </div>
                     </td>
-                    <td className="px-6 py-4 text-sm text-gray-600">{customer.phone}</td>
-                    <td className="px-6 py-4 text-sm text-gray-600">
-                      {new Date(customer.createdAt).toLocaleDateString()}
-                    </td>
-                    <td className="px-6 py-4 text-sm text-gray-600">{customer.totalTrips}</td>
+                    <td className="text-slate-500">{customer.phone}</td>
+                    <td className="text-slate-500">{new Date(customer.createdAt).toLocaleDateString()}</td>
+                    <td className="font-medium">{customer.totalTrips}</td>
                   </tr>
                 ))
               )}

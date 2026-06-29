@@ -189,17 +189,17 @@ export function DriversPage() {
   };
 
   return (
-    <div>
+    <div className="space-y-6">
       {/* Header */}
-      <div className="flex items-center justify-between mb-6">
+      <div className="flex flex-wrap items-end justify-between gap-4">
         <div>
-          <h2 className="text-xl font-semibold text-gray-900">Drivers</h2>
-          <p className="text-gray-500">Manage driver accounts and approval</p>
+          <h1 className="text-2xl font-bold text-slate-900">Drivers</h1>
+          <p className="mt-1 text-sm text-slate-500">Manage driver accounts and approval</p>
         </div>
-        <div className="flex gap-4">
+        <div className="flex flex-wrap gap-2">
           <BranchFilterSelect value={branchFilter} onChange={setBranchFilter} />
           <select
-            className="border border-gray-300 rounded-lg px-4 py-2 focus:outline-none focus:ring-2 focus:ring-primary-500"
+            className="input cursor-pointer w-auto"
             value={filter}
             onChange={(e) => setFilter(e.target.value as any)}
           >
@@ -209,8 +209,8 @@ export function DriversPage() {
           </select>
           <input
             type="search"
-            placeholder="Search drivers..."
-            className="border border-gray-300 rounded-lg px-4 py-2 focus:outline-none focus:ring-2 focus:ring-primary-500"
+            placeholder="Search drivers…"
+            className="input w-52"
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
           />
@@ -218,96 +218,85 @@ export function DriversPage() {
       </div>
 
       {/* Stats */}
-      <div className="grid grid-cols-4 gap-4 mb-6">
-        <div className="bg-white rounded-lg p-4 shadow">
-          <p className="text-2xl font-bold text-gray-900">{stats.total}</p>
-          <p className="text-sm text-gray-500">Total Drivers</p>
+      <div className="grid grid-cols-2 gap-4 md:grid-cols-4">
+        <div className="card p-5">
+          <p className="text-3xl font-bold tracking-tight text-slate-900">{stats.total}</p>
+          <p className="mt-0.5 text-sm font-medium text-slate-500">Total Drivers</p>
         </div>
-        <div className="bg-white rounded-lg p-4 shadow">
-          <p className="text-2xl font-bold text-green-500">{stats.online}</p>
-          <p className="text-sm text-gray-500">Online Now</p>
+        <div className="card p-5">
+          <p className="text-3xl font-bold tracking-tight text-green-600">{stats.online}</p>
+          <p className="mt-0.5 text-sm font-medium text-slate-500">Online Now</p>
         </div>
-        <div className="bg-white rounded-lg p-4 shadow">
-          <p className="text-2xl font-bold text-yellow-500">{stats.pending}</p>
-          <p className="text-sm text-gray-500">Pending Approval</p>
+        <div className="card p-5">
+          <p className="text-3xl font-bold tracking-tight text-amber-600">{stats.pending}</p>
+          <p className="mt-0.5 text-sm font-medium text-slate-500">Pending Approval</p>
         </div>
-        <div className="bg-white rounded-lg p-4 shadow">
-          <p className="text-2xl font-bold text-blue-500">{stats.approved}</p>
-          <p className="text-sm text-gray-500">Approved</p>
+        <div className="card p-5">
+          <p className="text-3xl font-bold tracking-tight text-blue-600">{stats.approved}</p>
+          <p className="mt-0.5 text-sm font-medium text-slate-500">Approved</p>
         </div>
       </div>
 
       {/* Tabs */}
-      <div className="flex gap-2 mb-4 border-b border-gray-200">
-        <button
-          onClick={() => setActiveTab('drivers')}
-          className={`px-4 py-2 text-sm font-medium border-b-2 -mb-px ${
-            activeTab === 'drivers'
-              ? 'border-primary-500 text-primary-600'
-              : 'border-transparent text-gray-500 hover:text-gray-700'
-          }`}
-        >
-          Drivers
-        </button>
-        <button
-          onClick={() => setActiveTab('feedback')}
-          className={`px-4 py-2 text-sm font-medium border-b-2 -mb-px ${
-            activeTab === 'feedback'
-              ? 'border-primary-500 text-primary-600'
-              : 'border-transparent text-gray-500 hover:text-gray-700'
-          }`}
-        >
-          Feedback
-        </button>
+      <div className="flex gap-1 border-b border-slate-200">
+        {(['drivers', 'feedback'] as const).map((tab) => (
+          <button
+            key={tab}
+            onClick={() => setActiveTab(tab)}
+            className={`-mb-px border-b-2 px-4 py-2.5 text-sm font-semibold capitalize transition ${
+              activeTab === tab
+                ? 'border-primary-500 text-primary-600'
+                : 'border-transparent text-slate-400 hover:text-slate-600'
+            }`}
+          >
+            {tab}
+          </button>
+        ))}
       </div>
 
       {activeTab === 'feedback' ? (
-        <div className="bg-white rounded-xl overflow-hidden shadow">
+        <div className="card overflow-hidden">
           {isLoadingFeedback ? (
-            <div className="text-center py-12 text-gray-500">
-              <span className="text-2xl block mb-2">⏳</span>
-              Loading feedback...
+            <div className="flex flex-col items-center gap-3 py-16 text-slate-400">
+              <div className="h-7 w-7 animate-spin rounded-full border-2 border-slate-200 border-t-primary-500" />
+              <span className="text-sm font-medium">Loading feedback…</span>
             </div>
           ) : feedbackSummary.length === 0 ? (
-            <div className="text-center py-12 text-gray-500">
-              <span className="text-4xl block mb-2">💬</span>
-              No feedback submitted yet
+            <div className="py-16 text-center">
+              <span className="mb-2 block text-4xl">💬</span>
+              <span className="text-sm text-slate-400">No feedback submitted yet</span>
             </div>
           ) : (
-            <table className="w-full">
-              <thead className="bg-gray-50 border-b border-gray-200">
+            <table className="table-modern">
+              <thead>
                 <tr>
-                  <th className="text-left px-6 py-4 text-sm font-medium text-gray-500">Driver</th>
-                  <th className="text-left px-6 py-4 text-sm font-medium text-gray-500">Phone</th>
-                  <th className="text-left px-6 py-4 text-sm font-medium text-gray-500">Avg Rating</th>
-                  <th className="text-left px-6 py-4 text-sm font-medium text-gray-500">Feedback Count</th>
-                  <th className="text-left px-6 py-4 text-sm font-medium text-gray-500">Fare Too High</th>
-                  <th className="text-left px-6 py-4 text-sm font-medium text-gray-500">Fare Too Low</th>
+                  <th>Driver</th>
+                  <th>Phone</th>
+                  <th>Avg Rating</th>
+                  <th>Feedback Count</th>
+                  <th>Fare Too High</th>
+                  <th>Fare Too Low</th>
                 </tr>
               </thead>
-              <tbody className="divide-y divide-gray-200">
+              <tbody>
                 {feedbackSummary.map((d) => (
-                  <tr key={d.driverId} className="hover:bg-gray-50">
-                    <td className="px-6 py-4 font-medium text-gray-900">{d.name}</td>
-                    <td className="px-6 py-4 text-sm text-gray-600">{d.phone}</td>
-                    <td className="px-6 py-4 text-sm text-gray-900">⭐ {d.avgRating.toFixed(1)}</td>
-                    <td className="px-6 py-4 text-sm text-gray-600">{d.totalFeedback}</td>
-                    <td className="px-6 py-4">
+                  <tr key={d.driverId}>
+                    <td className="font-semibold text-slate-900">{d.name}</td>
+                    <td className="text-slate-500">{d.phone}</td>
+                    <td className="font-medium">⭐ {d.avgRating.toFixed(1)}</td>
+                    <td className="text-slate-500">{d.totalFeedback}</td>
+                    <td>
                       {d.tooHighCount > 0 ? (
-                        <span className="inline-flex items-center gap-1 px-2 py-1 bg-red-100 text-red-700 text-xs font-medium rounded-full">
-                          ⚠️ {d.tooHighCount}
-                        </span>
+                        <span className="badge-red">⚠️ {d.tooHighCount}</span>
                       ) : (
-                        <span className="text-sm text-gray-400">0</span>
+                        <span className="text-slate-300">0</span>
                       )}
                     </td>
-                    <td className="px-6 py-4">
+                    <td>
                       {d.tooLowCount > 0 ? (
-                        <span className="inline-flex items-center gap-1 px-2 py-1 bg-yellow-100 text-yellow-700 text-xs font-medium rounded-full">
-                          {d.tooLowCount}
-                        </span>
+                        <span className="badge-amber">{d.tooLowCount}</span>
                       ) : (
-                        <span className="text-sm text-gray-400">0</span>
+                        <span className="text-slate-300">0</span>
                       )}
                     </td>
                   </tr>
@@ -317,118 +306,114 @@ export function DriversPage() {
           )}
         </div>
       ) : (
-      <div className="bg-white rounded-xl overflow-hidden shadow">
-        {isLoading ? (
-          <div className="text-center py-12 text-gray-500">
-            <span className="text-2xl block mb-2">⏳</span>
-            Loading drivers...
-          </div>
-        ) : (
-          <table className="w-full">
-            <thead className="bg-gray-50 border-b border-gray-200">
-              <tr>
-                <th className="text-left px-6 py-4 text-sm font-medium text-gray-500">Driver</th>
-                <th className="text-left px-6 py-4 text-sm font-medium text-gray-500">Phone</th>
-                <th className="text-left px-6 py-4 text-sm font-medium text-gray-500">Vehicle</th>
-                <th className="text-left px-6 py-4 text-sm font-medium text-gray-500">Plate</th>
-                <th className="text-left px-6 py-4 text-sm font-medium text-gray-500">Status</th>
-                <th className="text-right px-6 py-4 text-sm font-medium text-gray-500">Actions</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-gray-200">
-              {filteredDrivers.length === 0 ? (
+        <div className="card overflow-hidden">
+          {isLoading ? (
+            <div className="flex flex-col items-center gap-3 py-16 text-slate-400">
+              <div className="h-7 w-7 animate-spin rounded-full border-2 border-slate-200 border-t-primary-500" />
+              <span className="text-sm font-medium">Loading drivers…</span>
+            </div>
+          ) : (
+            <table className="table-modern">
+              <thead>
                 <tr>
-                  <td colSpan={6} className="text-center py-12 text-gray-500">
-                    <span className="text-4xl block mb-2">👥</span>
-                    {searchQuery ? 'No drivers found' : 'No drivers registered yet'}
-                  </td>
+                  <th>Driver</th>
+                  <th>Phone</th>
+                  <th>Vehicle</th>
+                  <th>Plate</th>
+                  <th>Status</th>
+                  <th className="text-right">Actions</th>
                 </tr>
-              ) : (
-                filteredDrivers.map((driver) => {
-                  const vehicleInfo = VEHICLE_INFO[driver.vehicleType];
-                  const isProcessing = processingIds.has(driver.id);
+              </thead>
+              <tbody>
+                {filteredDrivers.length === 0 ? (
+                  <tr>
+                    <td colSpan={6} className="py-16 text-center">
+                      <span className="mb-2 block text-4xl">👥</span>
+                      <span className="text-sm text-slate-400">
+                        {searchQuery ? 'No drivers found' : 'No drivers registered yet'}
+                      </span>
+                    </td>
+                  </tr>
+                ) : (
+                  filteredDrivers.map((driver) => {
+                    const vehicleInfo = VEHICLE_INFO[driver.vehicleType];
+                    const isProcessing = processingIds.has(driver.id);
 
-                  return (
-                    <tr key={driver.id} className="hover:bg-gray-50">
-                      <td className="px-6 py-4">
-                        <div className="flex items-center gap-3">
-                          <div className="w-10 h-10 bg-primary-100 rounded-full flex items-center justify-center text-primary-600 font-semibold">
-                            {driver.name.charAt(0).toUpperCase()}
+                    return (
+                      <tr key={driver.id}>
+                        <td>
+                          <div className="flex items-center gap-3">
+                            <div className="flex h-9 w-9 items-center justify-center rounded-full bg-primary-50 text-sm font-semibold text-primary-600">
+                              {driver.name.charAt(0).toUpperCase()}
+                            </div>
+                            <div>
+                              <p className="font-semibold text-slate-900">{driver.name}</p>
+                              <p className="text-xs text-slate-400">
+                                Joined {new Date(driver.createdAt).toLocaleDateString()}
+                              </p>
+                            </div>
                           </div>
-                          <div>
-                            <p className="font-medium text-gray-900">{driver.name}</p>
-                            <p className="text-xs text-gray-500">
-                              Joined {new Date(driver.createdAt).toLocaleDateString()}
-                            </p>
+                        </td>
+                        <td className="text-slate-500">{driver.phone}</td>
+                        <td>
+                          <span className="inline-flex items-center gap-1.5">
+                            <span>{vehicleInfo.icon}</span>
+                            <span className="font-medium">{vehicleInfo.label}</span>
+                          </span>
+                        </td>
+                        <td className="font-mono text-xs text-slate-500">{driver.vehiclePlate}</td>
+                        <td>
+                          <div className="flex flex-wrap gap-1.5">
+                            {driver.isApproved ? (
+                              <span className="badge-green">✓ Approved</span>
+                            ) : (
+                              <span className="badge-amber">⏳ Pending</span>
+                            )}
+                            {driver.isOnline && (
+                              <span className="badge-blue">
+                                <span className="badge-dot bg-blue-500" /> Online
+                              </span>
+                            )}
                           </div>
-                        </div>
-                      </td>
-                      <td className="px-6 py-4 text-sm text-gray-600">{driver.phone}</td>
-                      <td className="px-6 py-4">
-                        <span className="inline-flex items-center gap-1 text-sm">
-                          <span>{vehicleInfo.icon}</span>
-                          <span>{vehicleInfo.label}</span>
-                        </span>
-                      </td>
-                      <td className="px-6 py-4 text-sm font-mono text-gray-600">
-                        {driver.vehiclePlate}
-                      </td>
-                      <td className="px-6 py-4">
-                        <div className="flex flex-col gap-1">
-                          {driver.isApproved ? (
-                            <span className="inline-flex items-center gap-1 px-2 py-1 bg-green-100 text-green-700 text-xs font-medium rounded-full w-fit">
-                              ✓ Approved
-                            </span>
-                          ) : (
-                            <span className="inline-flex items-center gap-1 px-2 py-1 bg-yellow-100 text-yellow-700 text-xs font-medium rounded-full w-fit">
-                              ⏳ Pending
-                            </span>
-                          )}
-                          {driver.isOnline && (
-                            <span className="inline-flex items-center gap-1 px-2 py-1 bg-blue-100 text-blue-700 text-xs font-medium rounded-full w-fit">
-                              🟢 Online
-                            </span>
-                          )}
-                        </div>
-                      </td>
-                      <td className="px-6 py-4 text-right">
-                        <div className="flex justify-end gap-2">
-                          {!driver.isApproved ? (
-                            <>
-                              <button
-                                onClick={() => handleApprove(driver.id)}
-                                disabled={isProcessing}
-                                className="px-3 py-1 bg-green-500 text-white text-sm rounded-lg hover:bg-green-600 disabled:opacity-50"
-                              >
-                                {isProcessing ? '...' : 'Approve'}
-                              </button>
+                        </td>
+                        <td className="text-right">
+                          <div className="flex justify-end gap-2">
+                            {!driver.isApproved ? (
+                              <>
+                                <button
+                                  onClick={() => handleApprove(driver.id)}
+                                  disabled={isProcessing}
+                                  className="btn btn-sm bg-green-500 text-white hover:bg-green-600"
+                                >
+                                  {isProcessing ? '…' : 'Approve'}
+                                </button>
+                                <button
+                                  onClick={() => handleReject(driver.id)}
+                                  disabled={isProcessing}
+                                  className="btn-danger btn-sm"
+                                >
+                                  {isProcessing ? '…' : 'Reject'}
+                                </button>
+                              </>
+                            ) : (
                               <button
                                 onClick={() => handleReject(driver.id)}
                                 disabled={isProcessing}
-                                className="px-3 py-1 bg-red-500 text-white text-sm rounded-lg hover:bg-red-600 disabled:opacity-50"
+                                className="btn-secondary btn-sm"
                               >
-                                {isProcessing ? '...' : 'Reject'}
+                                {isProcessing ? '…' : 'Revoke'}
                               </button>
-                            </>
-                          ) : (
-                            <button
-                              onClick={() => handleReject(driver.id)}
-                              disabled={isProcessing}
-                              className="px-3 py-1 bg-gray-500 text-white text-sm rounded-lg hover:bg-gray-600 disabled:opacity-50"
-                            >
-                              {isProcessing ? '...' : 'Revoke'}
-                            </button>
-                          )}
-                        </div>
-                      </td>
-                    </tr>
-                  );
-                })
-              )}
-            </tbody>
-          </table>
-        )}
-      </div>
+                            )}
+                          </div>
+                        </td>
+                      </tr>
+                    );
+                  })
+                )}
+              </tbody>
+            </table>
+          )}
+        </div>
       )}
     </div>
   );

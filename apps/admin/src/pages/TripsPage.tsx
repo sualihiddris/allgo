@@ -148,28 +148,28 @@ export function TripsPage() {
   };
 
   return (
-    <div>
+    <div className="space-y-6">
       {/* Header */}
-      <div className="flex items-center justify-between mb-6">
+      <div className="flex flex-wrap items-end justify-between gap-4">
         <div>
-          <h2 className="text-xl font-semibold text-gray-900">Trips</h2>
-          <p className="text-gray-500">View and manage all ride &amp; delivery trips</p>
+          <h1 className="text-2xl font-bold text-slate-900">Trips</h1>
+          <p className="mt-1 text-sm text-slate-500">View and manage all ride &amp; delivery trips</p>
         </div>
-        <button onClick={() => fetchTrips(pagination.page)} className="px-4 py-2 bg-gray-100 text-gray-600 rounded-lg hover:bg-gray-200 transition-colors font-medium">
+        <button onClick={() => fetchTrips(pagination.page)} className="btn-secondary">
           🔄 Refresh
         </button>
       </div>
 
       {/* Mini Stats */}
-      <div className="grid grid-cols-4 gap-4 mb-6">
-        <MiniStat label="Total" value={statCounts.total} color="gray" />
+      <div className="grid grid-cols-2 gap-4 md:grid-cols-4">
+        <MiniStat label="Total" value={statCounts.total} color="slate" />
         <MiniStat label="Active" value={statCounts.active} color="orange" />
         <MiniStat label="Completed" value={statCounts.completed} color="green" />
         <MiniStat label="Cancelled" value={statCounts.cancelled} color="red" />
       </div>
 
       {/* Filters */}
-      <div className="bg-white rounded-xl shadow p-4 mb-6">
+      <div className="card p-4">
         <div className="flex flex-wrap items-end gap-3">
           <FilterSelect label="Status" value={statusFilter} onChange={setStatusFilter} options={[
             { value: 'ALL', label: 'All Status' },
@@ -190,24 +190,21 @@ export function TripsPage() {
             { value: 'KEKE', label: '🛺 Keke / Pragya' },
             { value: 'MOTOR_KING', label: '🛻 Aboboya' },
           ]} />
-          <div className="flex-1 min-w-[200px]">
-            <label className="block text-xs font-medium text-gray-500 mb-1">Search</label>
+          <div className="min-w-[200px] flex-1">
+            <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-slate-400">Search</label>
             <input type="search" placeholder="Address, phone, name…" value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary-500" />
+              onChange={(e) => setSearchQuery(e.target.value)} className="input" />
           </div>
           <div>
-            <label className="block text-xs font-medium text-gray-500 mb-1">From</label>
-            <input type="date" value={dateFrom} onChange={(e) => setDateFrom(e.target.value)}
-              className="border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary-500" />
+            <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-slate-400">From</label>
+            <input type="date" value={dateFrom} onChange={(e) => setDateFrom(e.target.value)} className="input w-auto" />
           </div>
           <div>
-            <label className="block text-xs font-medium text-gray-500 mb-1">To</label>
-            <input type="date" value={dateTo} onChange={(e) => setDateTo(e.target.value)}
-              className="border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary-500" />
+            <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-slate-400">To</label>
+            <input type="date" value={dateTo} onChange={(e) => setDateTo(e.target.value)} className="input w-auto" />
           </div>
           {hasActiveFilters && (
-            <button onClick={clearFilters} className="px-3 py-2 text-sm text-red-600 hover:bg-red-50 rounded-lg transition-colors">
+            <button onClick={clearFilters} className="btn-ghost text-red-600 hover:bg-red-50">
               ✕ Clear
             </button>
           )}
@@ -215,31 +212,32 @@ export function TripsPage() {
       </div>
 
       {/* Table */}
-      <div className="bg-white rounded-xl overflow-hidden shadow">
+      <div className="card overflow-hidden">
         {isLoading ? (
-          <div className="text-center py-16 text-gray-500">
-            <span className="text-2xl block mb-2">⏳</span>Loading trips…
+          <div className="flex flex-col items-center gap-3 py-16 text-slate-400">
+            <div className="h-7 w-7 animate-spin rounded-full border-2 border-slate-200 border-t-primary-500" />
+            <span className="text-sm font-medium">Loading trips…</span>
           </div>
         ) : trips.length === 0 ? (
-          <div className="text-center py-16 text-gray-500">
-            <span className="text-4xl block mb-2">🏍️</span>
-            {hasActiveFilters ? 'No trips match your filters' : 'No trips yet'}
+          <div className="py-16 text-center">
+            <span className="mb-2 block text-4xl">🏍️</span>
+            <span className="text-sm text-slate-400">{hasActiveFilters ? 'No trips match your filters' : 'No trips yet'}</span>
           </div>
         ) : (
           <>
-            <table className="w-full">
-              <thead className="bg-gray-50 border-b border-gray-200">
+            <table className="table-modern">
+              <thead>
                 <tr>
-                  <th className="text-left px-5 py-3 text-xs font-medium text-gray-500 uppercase tracking-wider">Trip</th>
-                  <th className="text-left px-5 py-3 text-xs font-medium text-gray-500 uppercase tracking-wider">Customer</th>
-                  <th className="text-left px-5 py-3 text-xs font-medium text-gray-500 uppercase tracking-wider">Driver</th>
-                  <th className="text-left px-5 py-3 text-xs font-medium text-gray-500 uppercase tracking-wider">Route</th>
-                  <th className="text-left px-5 py-3 text-xs font-medium text-gray-500 uppercase tracking-wider">Status</th>
-                  <th className="text-left px-5 py-3 text-xs font-medium text-gray-500 uppercase tracking-wider">Time</th>
-                  <th className="text-right px-5 py-3 text-xs font-medium text-gray-500 uppercase tracking-wider">Details</th>
+                  <th>Trip</th>
+                  <th>Customer</th>
+                  <th>Driver</th>
+                  <th>Route</th>
+                  <th>Status</th>
+                  <th>Time</th>
+                  <th className="text-right">Details</th>
                 </tr>
               </thead>
-              <tbody className="divide-y divide-gray-100">
+              <tbody>
                 {trips.map((trip) => (
                   <TripRow key={trip.id} trip={trip} isExpanded={expandedId === trip.id}
                     onToggle={() => setExpandedId(expandedId === trip.id ? null : trip.id)} />
@@ -249,18 +247,16 @@ export function TripsPage() {
 
             {/* Pagination */}
             {pagination.totalPages > 1 && (
-              <div className="flex items-center justify-between px-5 py-4 border-t border-gray-200 bg-gray-50">
-                <p className="text-sm text-gray-600">
+              <div className="flex items-center justify-between border-t border-slate-100 px-5 py-4">
+                <p className="text-sm text-slate-500">
                   Showing {(pagination.page - 1) * pagination.limit + 1}–{Math.min(pagination.page * pagination.limit, pagination.totalCount)} of {pagination.totalCount}
                 </p>
-                <div className="flex gap-2">
-                  <button disabled={pagination.page <= 1} onClick={() => fetchTrips(pagination.page - 1)}
-                    className="px-3 py-1 text-sm border border-gray-300 rounded-lg hover:bg-gray-100 disabled:opacity-40 disabled:cursor-not-allowed">
+                <div className="flex items-center gap-2">
+                  <button disabled={pagination.page <= 1} onClick={() => fetchTrips(pagination.page - 1)} className="btn-secondary btn-sm">
                     ← Prev
                   </button>
-                  <span className="px-3 py-1 text-sm text-gray-600">Page {pagination.page} / {pagination.totalPages}</span>
-                  <button disabled={pagination.page >= pagination.totalPages} onClick={() => fetchTrips(pagination.page + 1)}
-                    className="px-3 py-1 text-sm border border-gray-300 rounded-lg hover:bg-gray-100 disabled:opacity-40 disabled:cursor-not-allowed">
+                  <span className="text-sm font-medium text-slate-500">Page {pagination.page} / {pagination.totalPages}</span>
+                  <button disabled={pagination.page >= pagination.totalPages} onClick={() => fetchTrips(pagination.page + 1)} className="btn-secondary btn-sm">
                     Next →
                   </button>
                 </div>
@@ -277,12 +273,12 @@ export function TripsPage() {
 
 function MiniStat({ label, value, color }: { label: string; value: number; color: string }) {
   const colors: Record<string, string> = {
-    gray: 'text-gray-900', orange: 'text-orange-600', green: 'text-green-600', red: 'text-red-600',
+    slate: 'text-slate-900', orange: 'text-orange-600', green: 'text-green-600', red: 'text-red-600',
   };
   return (
-    <div className="bg-white rounded-lg p-4 shadow">
-      <p className={`text-2xl font-bold ${colors[color]}`}>{value}</p>
-      <p className="text-sm text-gray-500">{label}</p>
+    <div className="card p-5">
+      <p className={`text-3xl font-bold tracking-tight ${colors[color]}`}>{value}</p>
+      <p className="mt-0.5 text-sm font-medium text-slate-500">{label}</p>
     </div>
   );
 }
@@ -293,9 +289,8 @@ function FilterSelect({ label, value, onChange, options }: {
 }) {
   return (
     <div>
-      <label className="block text-xs font-medium text-gray-500 mb-1">{label}</label>
-      <select value={value} onChange={(e) => onChange(e.target.value)}
-        className="border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary-500">
+      <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-slate-400">{label}</label>
+      <select value={value} onChange={(e) => onChange(e.target.value)} className="input w-auto cursor-pointer">
         {options.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
       </select>
     </div>
@@ -309,76 +304,76 @@ function TripRow({ trip, isExpanded, onToggle }: { trip: Trip; isExpanded: boole
 
   return (
     <>
-      <tr className="hover:bg-gray-50 cursor-pointer transition-colors" onClick={onToggle}>
+      <tr className="cursor-pointer" onClick={onToggle}>
         {/* Trip Info */}
-        <td className="px-5 py-4">
-          <div className="flex items-center gap-2">
+        <td>
+          <div className="flex items-center gap-2.5">
             <span className="text-xl">{vehicleIcon}</span>
             <div>
-              <p className="text-sm font-medium text-gray-900">
+              <p className="font-semibold text-slate-900">
                 {trip.vehicleType} {trip.serviceType === 'DELIVERY' ? '· Delivery' : ''}
               </p>
-              <p className="text-xs text-gray-400 font-mono">{sourceIcon} {trip.id.slice(0, 8)}</p>
+              <p className="font-mono text-xs text-slate-400">{sourceIcon} {trip.id.slice(0, 8)}</p>
             </div>
           </div>
         </td>
 
         {/* Customer */}
-        <td className="px-5 py-4">
+        <td>
           {trip.customer ? (
             <div>
-              <p className="text-sm font-medium text-gray-900">{trip.customer.name || 'Unknown'}</p>
-              <p className="text-xs text-gray-500">{trip.customer.phone}</p>
+              <p className="font-semibold text-slate-900">{trip.customer.name || 'Unknown'}</p>
+              <p className="text-xs text-slate-400">{trip.customer.phone}</p>
             </div>
           ) : (
-            <span className="text-sm text-gray-400">—</span>
+            <span className="text-slate-300">—</span>
           )}
         </td>
 
         {/* Driver */}
-        <td className="px-5 py-4">
+        <td>
           {trip.driver ? (
             <div>
-              <p className="text-sm font-medium text-gray-900">{trip.driver.name || 'Unknown'}</p>
-              <p className="text-xs text-gray-500">{trip.driver.phone}</p>
+              <p className="font-semibold text-slate-900">{trip.driver.name || 'Unknown'}</p>
+              <p className="text-xs text-slate-400">{trip.driver.phone}</p>
             </div>
           ) : (
-            <span className="text-sm text-gray-400 italic">Unassigned</span>
+            <span className="italic text-slate-300">Unassigned</span>
           )}
         </td>
 
         {/* Route */}
-        <td className="px-5 py-4">
+        <td>
           <div className="max-w-[200px]">
-            <p className="text-sm text-gray-800 truncate" title={trip.pickup.address}>📍 {trip.pickup.address}</p>
-            <p className="text-sm text-gray-600 truncate" title={trip.destination.address}>📌 {trip.destination.address}</p>
+            <p className="truncate text-slate-700" title={trip.pickup.address}>📍 {trip.pickup.address}</p>
+            <p className="truncate text-slate-500" title={trip.destination.address}>📌 {trip.destination.address}</p>
           </div>
         </td>
 
         {/* Status */}
-        <td className="px-5 py-4">
-          <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${statusCfg.bg} ${statusCfg.color}`}>
+        <td>
+          <span className={`badge ${statusCfg.bg} ${statusCfg.color}`}>
             {statusCfg.label}
           </span>
         </td>
 
         {/* Time */}
-        <td className="px-5 py-4">
-          <p className="text-sm text-gray-600">{timeAgo(trip.createdAt)}</p>
-          <p className="text-xs text-gray-400">{formatDate(trip.createdAt)}</p>
+        <td>
+          <p className="text-slate-600">{timeAgo(trip.createdAt)}</p>
+          <p className="text-xs text-slate-400">{formatDate(trip.createdAt)}</p>
         </td>
 
         {/* Expand */}
-        <td className="px-5 py-4 text-right">
-          <span className="text-gray-400 text-lg">{isExpanded ? '▲' : '▼'}</span>
+        <td className="text-right">
+          <span className="text-xs text-slate-400">{isExpanded ? '▲' : '▼'}</span>
         </td>
       </tr>
 
       {/* Expanded Detail Row */}
       {isExpanded && (
-        <tr className="bg-gray-50">
+        <tr className="bg-slate-50/70">
           <td colSpan={7} className="px-5 py-4">
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">
+            <div className="grid grid-cols-2 gap-4 text-sm md:grid-cols-4">
               <DetailItem label="Distance" value={formatDistance(trip.distanceMeters)} />
               <DetailItem label="Source" value={`${SOURCE_ICONS[trip.source]} ${trip.source}`} />
               <DetailItem label="Service" value={trip.serviceType + (trip.deliveryType ? ` (${trip.deliveryType})` : '')} />
@@ -392,17 +387,17 @@ function TripRow({ trip, isExpanded, onToggle }: { trip: Trip; isExpanded: boole
               {trip.cancelReason && <DetailItem label="Cancel Reason" value={trip.cancelReason} span={2} />}
 
               {trip.feedback && (
-                <div className="col-span-2 md:col-span-4 bg-white rounded-lg p-3 border border-gray-200">
-                  <p className="text-xs font-medium text-gray-500 mb-1">Feedback</p>
+                <div className="card col-span-2 p-3 md:col-span-4">
+                  <p className="mb-1 text-xs font-semibold uppercase tracking-wide text-slate-400">Feedback</p>
                   <div className="flex items-center gap-4">
                     <span className="text-lg">{'⭐'.repeat(trip.feedback.rating)}</span>
-                    <span className={`text-xs px-2 py-0.5 rounded-full ${
-                      trip.feedback.fareRating === 'fair' ? 'bg-green-100 text-green-700' :
-                      trip.feedback.fareRating === 'too_high' ? 'bg-red-100 text-red-700' : 'bg-yellow-100 text-yellow-700'
-                    }`}>
+                    <span className={
+                      trip.feedback.fareRating === 'fair' ? 'badge-green' :
+                      trip.feedback.fareRating === 'too_high' ? 'badge-red' : 'badge-amber'
+                    }>
                       Fare: {trip.feedback.fareRating}
                     </span>
-                    {trip.feedback.issue && <span className="text-xs text-gray-600">Issue: {trip.feedback.issue}</span>}
+                    {trip.feedback.issue && <span className="text-xs text-slate-500">Issue: {trip.feedback.issue}</span>}
                   </div>
                 </div>
               )}
@@ -416,9 +411,9 @@ function TripRow({ trip, isExpanded, onToggle }: { trip: Trip; isExpanded: boole
 
 function DetailItem({ label, value, span }: { label: string; value: string; span?: number }) {
   return (
-    <div className={span ? `col-span-${span}` : ''}>
-      <p className="text-xs font-medium text-gray-500">{label}</p>
-      <p className="text-sm text-gray-900 mt-0.5">{value}</p>
+    <div className={span === 2 ? 'col-span-2' : ''}>
+      <p className="text-xs font-semibold uppercase tracking-wide text-slate-400">{label}</p>
+      <p className="mt-0.5 text-sm text-slate-900">{value}</p>
     </div>
   );
 }

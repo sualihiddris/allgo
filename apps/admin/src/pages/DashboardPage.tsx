@@ -69,50 +69,51 @@ export function DashboardPage() {
 
   if (isLoading) {
     return (
-      <div className="flex items-center justify-center h-64">
-        <div className="text-center text-gray-500">
-          <span className="text-2xl block mb-2">⏳</span>
-          Loading dashboard...
+      <div className="flex h-64 items-center justify-center">
+        <div className="flex flex-col items-center gap-3 text-slate-400">
+          <div className="h-8 w-8 animate-spin rounded-full border-2 border-slate-200 border-t-primary-500" />
+          <span className="text-sm font-medium">Loading dashboard…</span>
         </div>
       </div>
     );
   }
 
   return (
-    <div className="space-y-8">
-      <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
-        <p className="text-sm font-medium text-primary-600">AllGo Admin</p>
-        <h2 className="mt-1 text-2xl font-semibold text-slate-900">Dashboard</h2>
-        <p className="mt-2 max-w-2xl text-sm text-slate-500">
+    <div className="space-y-6">
+      {/* Page heading */}
+      <div>
+        <h1 className="text-2xl font-bold text-slate-900">Dashboard</h1>
+        <p className="mt-1 text-sm text-slate-500">
           A clean overview of trips, drivers, and service status with the key actions up front.
         </p>
       </div>
 
       {/* Section 20: Night/Call-In Service Status Banner */}
       {stats?.service && (
-        <div className={`flex items-center gap-4 rounded-2xl border p-4 ${
-          stats.service.isNightHours
-            ? 'border-orange-200 bg-orange-50 text-slate-900'
-            : 'border-green-200 bg-green-50 text-slate-900'
-        }`}>
-          <span className="text-3xl">{stats.service.isNightHours ? '🌙' : '☀️'}</span>
+        <div
+          className={`flex items-center gap-4 overflow-hidden rounded-2xl p-4 ring-1 ${
+            stats.service.isNightHours
+              ? 'bg-gradient-to-r from-indigo-50 to-slate-50 ring-indigo-100'
+              : 'bg-gradient-to-r from-green-50 to-emerald-50/50 ring-green-100'
+          }`}
+        >
+          <span className="flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl bg-white text-2xl shadow-sm">
+            {stats.service.isNightHours ? '🌙' : '☀️'}
+          </span>
           <div className="min-w-0">
             <h3 className="font-semibold text-slate-900">
               {stats.service.isNightHours ? 'Night Service Active' : 'Daytime Service'}
             </h3>
             <p className="text-sm text-slate-600">
-              {stats.service.isNightHours 
+              {stats.service.isNightHours
                 ? `${stats.drivers.nightModeActive || 0} drivers with night mode enabled`
-                : stats.service.isCallInHours 
-                  ? 'Call-in booking available (7am-9pm)'
+                : stats.service.isCallInHours
+                  ? 'Call-in booking available (7am–9pm)'
                   : 'Call-in booking closed for tonight'}
             </p>
           </div>
           {stats.service.isCallInHours && (
-            <button
-              onClick={() => navigate('/call-in')}
-              className="ml-auto rounded-lg bg-primary-500 px-4 py-2 font-semibold text-white transition-colors hover:bg-primary-600"
-            >
+            <button onClick={() => navigate('/call-in')} className="btn-primary ml-auto shrink-0">
               📞 New Call-In Trip
             </button>
           )}
@@ -149,32 +150,32 @@ export function DashboardPage() {
           value={stats?.drivers.pending.toString() || '0'}
           subtitle={`${stats?.drivers.total || 0} total drivers`}
           icon="⏳"
-          color="yellow"
+          color="amber"
           actionLabel={stats && stats.drivers.pending > 0 ? 'Review Now' : undefined}
           onAction={() => navigate('/drivers')}
         />
       </div>
 
       {/* System Status */}
-      <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
-        <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
-          <h3 className="mb-4 text-lg font-semibold text-slate-900">System Status</h3>
-          <div className="space-y-3">
+      <div className="grid grid-cols-1 gap-5 lg:grid-cols-2">
+        <div className="card p-6">
+          <h3 className="mb-5 text-base font-semibold text-slate-900">System Status</h3>
+          <div className="space-y-1">
             <StatusItem label="Backend Server" status="operational" />
             <StatusItem label="Database" status="operational" />
             <StatusItem label="Socket Server" status="operational" />
           </div>
         </div>
 
-        <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
-          <h3 className="mb-4 text-lg font-semibold text-slate-900">MVP Features</h3>
-          <div className="space-y-2 text-sm">
+        <div className="card p-6">
+          <h3 className="mb-5 text-base font-semibold text-slate-900">MVP Features</h3>
+          <div className="space-y-2.5 text-sm">
             <FeatureItem label="3 Vehicle Types (MOTO, KEKE, MOTOR_KING)" enabled />
             <FeatureItem label="Phone-based Communication" enabled />
-            <FeatureItem label="Cash + Mobile Money Payments" enabled />
             <FeatureItem label="Driver Approval Workflow" enabled />
             <FeatureItem label="Simple Dispatch (2km→5km→8km)" enabled />
             <FeatureItem label="30-second Job Timeout" enabled />
+            <FeatureItem label="Branch-scoped admin roles + audit log" enabled />
           </div>
         </div>
       </div>
@@ -195,33 +196,31 @@ function StatCard({
   value: string;
   subtitle: string;
   icon: string;
-  color: 'green' | 'blue' | 'purple' | 'yellow';
+  color: 'green' | 'blue' | 'purple' | 'amber';
   actionLabel?: string;
   onAction?: () => void;
 }) {
   const colorClasses = {
-    green: 'bg-green-100 text-green-600',
-    blue: 'bg-blue-100 text-blue-600',
-    purple: 'bg-purple-100 text-purple-600',
-    yellow: 'bg-yellow-100 text-yellow-600',
+    green: 'bg-green-50 text-green-600',
+    blue: 'bg-blue-50 text-blue-600',
+    purple: 'bg-purple-50 text-purple-600',
+    amber: 'bg-amber-50 text-amber-600',
   };
 
   return (
-    <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
-      <div className="flex items-center justify-between mb-4">
-        <div className={`flex h-12 w-12 items-center justify-center rounded-full ${colorClasses[color]} text-2xl`}>
-          {icon}
-        </div>
+    <div className="stat-card flex flex-col">
+      <div className={`flex h-11 w-11 items-center justify-center rounded-2xl text-xl ${colorClasses[color]}`}>
+        {icon}
       </div>
-      <p className="mb-1 text-3xl font-semibold text-slate-900">{value}</p>
-      <p className="mb-1 text-sm font-medium text-slate-900">{title}</p>
-      <p className="text-xs text-slate-500">{subtitle}</p>
+      <p className="mt-4 text-3xl font-bold tracking-tight text-slate-900">{value}</p>
+      <p className="mt-0.5 text-sm font-semibold text-slate-700">{title}</p>
+      <p className="text-xs text-slate-400">{subtitle}</p>
       {actionLabel && onAction && (
         <button
           onClick={onAction}
-          className="mt-3 text-sm font-medium text-primary-600 hover:text-primary-700"
+          className="mt-3 inline-flex items-center gap-1 self-start text-sm font-semibold text-primary-600 transition hover:gap-1.5 hover:text-primary-700"
         >
-          {actionLabel} →
+          {actionLabel} <span aria-hidden>→</span>
         </button>
       )}
     </div>
@@ -230,19 +229,22 @@ function StatCard({
 
 function StatusItem({ label, status }: { label: string; status: 'operational' | 'degraded' | 'down' }) {
   const statusConfig = {
-    operational: { color: 'bg-green-500', text: 'Operational' },
-    degraded: { color: 'bg-amber-500', text: 'Degraded' },
-    down: { color: 'bg-red-500', text: 'Down' },
+    operational: { dot: 'bg-green-500', ring: 'bg-green-500/20', text: 'Operational', color: 'text-green-600' },
+    degraded: { dot: 'bg-amber-500', ring: 'bg-amber-500/20', text: 'Degraded', color: 'text-amber-600' },
+    down: { dot: 'bg-red-500', ring: 'bg-red-500/20', text: 'Down', color: 'text-red-600' },
   };
 
   const config = statusConfig[status];
 
   return (
-    <div className="flex items-center justify-between py-2">
-      <span className="text-sm text-slate-700">{label}</span>
+    <div className="flex items-center justify-between border-b border-slate-100 py-2.5 last:border-0">
+      <span className="text-sm font-medium text-slate-600">{label}</span>
       <div className="flex items-center gap-2">
-        <div className={`h-2 w-2 rounded-full ${config.color}`}></div>
-        <span className="text-sm text-slate-500">{config.text}</span>
+        <span className={`relative flex h-2 w-2`}>
+          <span className={`absolute inline-flex h-full w-full animate-ping rounded-full ${config.ring}`} />
+          <span className={`relative inline-flex h-2 w-2 rounded-full ${config.dot}`} />
+        </span>
+        <span className={`text-sm font-medium ${config.color}`}>{config.text}</span>
       </div>
     </div>
   );
@@ -250,9 +252,15 @@ function StatusItem({ label, status }: { label: string; status: 'operational' | 
 
 function FeatureItem({ label, enabled }: { label: string; enabled: boolean }) {
   return (
-    <div className="flex items-center gap-2 py-1">
-      <span className="text-lg">{enabled ? '✅' : '❌'}</span>
-      <span className={enabled ? 'text-slate-700' : 'text-slate-400'}>{label}</span>
+    <div className="flex items-center gap-2.5">
+      <span
+        className={`flex h-5 w-5 shrink-0 items-center justify-center rounded-full text-[11px] ${
+          enabled ? 'bg-green-100 text-green-600' : 'bg-slate-100 text-slate-400'
+        }`}
+      >
+        {enabled ? '✓' : '–'}
+      </span>
+      <span className={enabled ? 'text-slate-600' : 'text-slate-400'}>{label}</span>
     </div>
   );
 }

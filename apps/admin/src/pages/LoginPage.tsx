@@ -107,11 +107,14 @@ export function LoginPage() {
   };
 
   return (
-    <div className="min-h-screen bg-gray-100 flex items-center justify-center p-4">
-      <div className="bg-white rounded-2xl shadow-lg p-8 w-full max-w-md">
-        <div className="text-center mb-8">
-          <h1 className="text-2xl font-bold text-gray-900">AllGo Admin</h1>
-          <p className="text-gray-500 mt-2">
+    <div className="flex min-h-screen items-center justify-center bg-gradient-to-b from-slate-50 to-slate-100 p-4">
+      <div className="card w-full max-w-md p-8">
+        <div className="mb-8 text-center">
+          <div className="mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-2xl bg-primary-500 text-xl font-bold text-white shadow-sm shadow-orange-500/30">
+            A
+          </div>
+          <h1 className="text-xl font-bold text-slate-900">AllGo Admin</h1>
+          <p className="mt-1 text-sm text-slate-500">
             {step === 'phone'
               ? 'Sign in to your admin account'
               : step === 'otp'
@@ -121,18 +124,18 @@ export function LoginPage() {
         </div>
 
         {error && (
-          <div className="bg-red-50 border border-red-200 text-red-600 px-4 py-3 rounded-lg mb-6">
+          <div className="mb-6 rounded-xl bg-red-50 px-4 py-3 text-sm text-red-600 ring-1 ring-red-100">
             {error}
           </div>
         )}
 
         {step === 'phone' ? (
           <form onSubmit={handleRequestOtp}>
-            <label className="block mb-2 text-sm font-medium text-gray-700">
+            <label className="mb-2 block text-sm font-medium text-slate-600">
               Phone Number
             </label>
-            <div className="flex border border-gray-300 rounded-lg overflow-hidden focus-within:ring-2 focus-within:ring-primary-500 focus-within:border-transparent">
-              <span className="bg-gray-50 px-4 py-3 text-gray-500 border-r border-gray-300">
+            <div className="flex overflow-hidden rounded-xl ring-1 ring-slate-200 transition focus-within:ring-2 focus-within:ring-primary-500">
+              <span className="border-r border-slate-200 bg-slate-50 px-4 py-3 text-slate-500">
                 +233
               </span>
               <input
@@ -148,7 +151,7 @@ export function LoginPage() {
             <button
               type="submit"
               disabled={isLoading}
-              className="w-full mt-6 bg-primary-500 text-white py-3 px-4 rounded-lg font-medium hover:bg-primary-600 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+              className="btn-primary mt-6 w-full py-3"
             >
               {isLoading ? 'Sending...' : 'Continue'}
             </button>
@@ -158,7 +161,7 @@ export function LoginPage() {
                 type="button"
                 onClick={handleDevLogin}
                 disabled={isLoading}
-                className="w-full mt-4 bg-gray-100 text-gray-700 border border-gray-300 py-3 px-4 rounded-lg font-medium hover:bg-gray-200 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                className="btn-secondary mt-4 w-full py-3"
               >
                 Dev Login (Skip OTP)
               </button>
@@ -177,7 +180,7 @@ export function LoginPage() {
               </button>
             </p>
 
-            <label className="block mb-2 text-sm font-medium text-gray-700">
+            <label className="mb-2 block text-sm font-medium text-slate-600">
               Verification Code
             </label>
             <input
@@ -186,21 +189,21 @@ export function LoginPage() {
               onChange={(e) => setOtp(e.target.value)}
               placeholder="Enter 6-digit code"
               maxLength={6}
-              className="w-full border border-gray-300 rounded-lg px-4 py-3 focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-transparent text-center text-2xl tracking-widest"
+              className="input py-3 text-center text-2xl tracking-[0.4em]"
               required
             />
 
             <button
               type="submit"
               disabled={isLoading || otp.length !== 6}
-              className="w-full mt-6 bg-primary-500 text-white py-3 px-4 rounded-lg font-medium hover:bg-primary-600 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+              className="btn-primary mt-6 w-full py-3"
             >
               {isLoading ? 'Verifying...' : 'Verify'}
             </button>
           </form>
         ) : (
           <form onSubmit={handleVerifyTotp}>
-            <label className="block mb-2 text-sm font-medium text-gray-700">
+            <label className="mb-2 block text-sm font-medium text-slate-600">
               Authenticator Code
             </label>
             <input
@@ -210,14 +213,14 @@ export function LoginPage() {
               placeholder="Enter 6-digit code"
               maxLength={6}
               autoFocus
-              className="w-full border border-gray-300 rounded-lg px-4 py-3 focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-transparent text-center text-2xl tracking-widest"
+              className="input py-3 text-center text-2xl tracking-[0.4em]"
               required
             />
 
             <button
               type="submit"
               disabled={isLoading || totpCode.length !== 6}
-              className="w-full mt-6 bg-primary-500 text-white py-3 px-4 rounded-lg font-medium hover:bg-primary-600 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+              className="btn-primary mt-6 w-full py-3"
             >
               {isLoading ? 'Verifying...' : 'Verify'}
             </button>

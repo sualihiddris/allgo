@@ -3,32 +3,128 @@
 @tailwind utilities;
 
 :root {
-  --color-primary: rgb(249, 115, 22);
-  --color-primary-light: rgb(255, 212, 179);
-  --color-primary-pale: rgb(255, 240, 230);
-  --color-primary-dark: rgb(194, 65, 12);
-  --color-deep: rgb(124, 45, 18);
-  --color-background: rgb(255, 255, 255);
-  --color-text-primary: rgb(26, 26, 26);
-  --color-text-secondary: rgb(107, 114, 128);
-  --color-border: rgb(229, 229, 229);
-  --color-success: rgb(22, 163, 74);
-  --color-success-pale: rgb(220, 252, 231);
-  --color-warning: rgb(245, 158, 11);
-  --color-warning-pale: rgb(254, 243, 199);
-  --color-error: rgb(220, 38, 38);
-  --color-error-pale: rgb(254, 226, 226);
+  /* Channel triplets (not rgb()) so Tailwind can inject alpha: bg-primary-500/10 etc. */
+  --color-primary: 249 115 22;
+  --color-primary-light: 255 212 179;
+  --color-primary-pale: 255 240 230;
+  --color-primary-dark: 194 65 12;
+  --color-deep: 124 45 18;
+  --color-background: 255 255 255;
+  --color-text-primary: 15 23 42;
+  --color-text-secondary: 100 116 139;
+  --color-border: 226 232 240;
+  --color-success: 22 163 74;
+  --color-success-pale: 220 252 231;
+  --color-warning: 245 158 11;
+  --color-warning-pale: 254 243 199;
+  --color-error: 220 38 38;
+  --color-error-pale: 254 226 226;
+
+  /* App canvas — a soft slate tint, warmer and less flat than pure white */
+  --canvas: 248 250 252;
 }
 
 * {
   box-sizing: border-box;
 }
 
+html {
+  -webkit-text-size-adjust: 100%;
+}
+
 body {
   margin: 0;
-  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, sans-serif;
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
-  background-color: var(--color-background);
-  color: var(--color-text-primary);
+  background-color: rgb(var(--canvas));
+  color: rgb(var(--color-text-primary));
+  letter-spacing: -0.011em;
+}
+
+h1, h2, h3, h4 {
+  letter-spacing: -0.02em;
+}
+
+/* Modern thin scrollbar */
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+::-webkit-scrollbar-thumb {
+  background: rgb(203 213 225);
+  border-radius: 9999px;
+  border: 2px solid transparent;
+  background-clip: content-box;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: rgb(148 163 184);
+  background-clip: content-box;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+@layer components {
+  /* Surfaces */
+  .card {
+    @apply rounded-2xl bg-white ring-1 ring-slate-200/70 shadow-sm;
+  }
+  .card-hover {
+    @apply transition duration-200 hover:shadow-md hover:ring-slate-300/80;
+  }
+  .stat-card {
+    @apply card card-hover p-5;
+  }
+
+  /* Buttons */
+  .btn {
+    @apply inline-flex items-center justify-center gap-2 rounded-xl text-sm font-semibold transition duration-150 active:scale-[0.98] disabled:opacity-50 disabled:pointer-events-none focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-2;
+  }
+  .btn-primary {
+    @apply btn px-4 py-2.5 bg-primary-500 text-white shadow-sm shadow-orange-500/25 hover:bg-primary-600 focus-visible:ring-primary-500;
+  }
+  .btn-secondary {
+    @apply btn px-4 py-2.5 bg-white text-slate-700 ring-1 ring-slate-200 hover:bg-slate-50 focus-visible:ring-slate-400;
+  }
+  .btn-ghost {
+    @apply btn px-3 py-1.5 text-slate-600 hover:bg-slate-100;
+  }
+  .btn-danger {
+    @apply btn px-3 py-1.5 bg-red-50 text-red-600 hover:bg-red-100;
+  }
+  .btn-sm {
+    @apply px-3 py-1.5 text-xs;
+  }
+
+  /* Inputs */
+  .input {
+    @apply w-full rounded-xl bg-white px-4 py-2.5 text-sm text-slate-900 ring-1 ring-slate-200 transition placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-primary-500;
+  }
+
+  /* Badges */
+  .badge {
+    @apply inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-medium;
+  }
+  .badge-green { @apply badge bg-green-50 text-green-700; }
+  .badge-red { @apply badge bg-red-50 text-red-700; }
+  .badge-amber { @apply badge bg-amber-50 text-amber-700; }
+  .badge-blue { @apply badge bg-blue-50 text-blue-700; }
+  .badge-purple { @apply badge bg-purple-50 text-purple-700; }
+  .badge-slate { @apply badge bg-slate-100 text-slate-600; }
+  .badge-dot { @apply h-1.5 w-1.5 rounded-full; }
+
+  /* Tables */
+  .table-modern {
+    @apply w-full text-left;
+  }
+  .table-modern thead th {
+    @apply px-5 py-3 text-[11px] font-semibold uppercase tracking-wider text-slate-400;
+  }
+  .table-modern tbody tr {
+    @apply border-t border-slate-100 transition-colors hover:bg-slate-50/70;
+  }
+  .table-modern tbody td {
+    @apply px-5 py-4 text-sm text-slate-700 align-middle;
+  }
 }

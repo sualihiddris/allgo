@@ -86,17 +86,17 @@ export function AuditLogPage() {
   const filteredAdminName = admins.find((a) => a.userId === adminFilter)?.name;
 
   return (
-    <div>
-      <div className="flex items-center justify-between mb-6">
+    <div className="space-y-6">
+      <div className="flex flex-wrap items-end justify-between gap-4">
         <div>
-          <h2 className="text-xl font-semibold text-gray-900">Audit Log</h2>
-          <p className="text-gray-500">Complete history of admin actions across all branches</p>
+          <h1 className="text-2xl font-bold text-slate-900">Audit Log</h1>
+          <p className="mt-1 text-sm text-slate-500">Complete history of admin actions across all branches</p>
         </div>
         <div className="flex gap-2">
           <select
             value={adminFilter}
             onChange={(e) => handleAdminFilterChange(e.target.value)}
-            className="border border-gray-300 rounded-lg px-4 py-2 text-sm"
+            className="input w-auto cursor-pointer"
           >
             <option value="">All Admins</option>
             {admins.map((a) => (
@@ -108,7 +108,7 @@ export function AuditLogPage() {
           <select
             value={actionFilter}
             onChange={(e) => setActionFilter(e.target.value)}
-            className="border border-gray-300 rounded-lg px-4 py-2 text-sm"
+            className="input w-auto cursor-pointer"
           >
             <option value="">All Actions</option>
             {ACTIONS.map((a) => (
@@ -119,70 +119,65 @@ export function AuditLogPage() {
       </div>
 
       {adminFilter && (
-        <div className="mb-4 flex items-center gap-2 text-sm text-gray-600">
-          Showing activity for <span className="font-medium text-gray-900">{filteredAdminName || '…'}</span>
-          <button
-            onClick={() => handleAdminFilterChange('')}
-            className="text-primary-600 hover:underline"
-          >
+        <div className="flex items-center gap-2 text-sm text-slate-500">
+          Showing activity for <span className="font-semibold text-slate-900">{filteredAdminName || '…'}</span>
+          <button onClick={() => handleAdminFilterChange('')} className="font-medium text-primary-600 hover:underline">
             Clear
           </button>
         </div>
       )}
 
-      <div className="bg-white rounded-xl overflow-hidden shadow">
+      <div className="card overflow-hidden">
         {isLoading ? (
-          <div className="text-center py-12 text-gray-500">
-            <span className="text-2xl block mb-2">⏳</span>
-            Loading audit log...
+          <div className="flex flex-col items-center gap-3 py-16 text-slate-400">
+            <div className="h-7 w-7 animate-spin rounded-full border-2 border-slate-200 border-t-primary-500" />
+            <span className="text-sm font-medium">Loading audit log…</span>
           </div>
         ) : logs.length === 0 ? (
-          <div className="text-center py-12 text-gray-500">
-            <span className="text-4xl block mb-2">📋</span>
-            {adminFilter || actionFilter ? 'No matching actions' : 'No actions logged yet'}
+          <div className="py-16 text-center">
+            <span className="mb-2 block text-4xl">📋</span>
+            <span className="text-sm text-slate-400">{adminFilter || actionFilter ? 'No matching actions' : 'No actions logged yet'}</span>
           </div>
         ) : (
           <>
-            <table className="w-full">
-              <thead className="bg-gray-50 border-b border-gray-200">
+            <table className="table-modern">
+              <thead>
                 <tr>
-                  <th className="text-left px-5 py-3 text-xs font-medium text-gray-500 uppercase">When</th>
-                  <th className="text-left px-5 py-3 text-xs font-medium text-gray-500 uppercase">Admin</th>
-                  <th className="text-left px-5 py-3 text-xs font-medium text-gray-500 uppercase">Action</th>
-                  <th className="text-left px-5 py-3 text-xs font-medium text-gray-500 uppercase">Target</th>
-                  <th className="text-left px-5 py-3 text-xs font-medium text-gray-500 uppercase">Details</th>
+                  <th>When</th>
+                  <th>Admin</th>
+                  <th>Action</th>
+                  <th>Target</th>
+                  <th>Details</th>
                 </tr>
               </thead>
-              <tbody className="divide-y divide-gray-100">
+              <tbody>
                 {logs.map((log) => (
-                  <tr key={log.id} className="hover:bg-gray-50">
-                    <td className="px-5 py-3 text-sm text-gray-600">
+                  <tr key={log.id}>
+                    <td className="text-slate-500">
                       {new Date(log.createdAt).toLocaleString()}
                     </td>
-                    <td className="px-5 py-3 text-sm">
+                    <td>
                       {/* Phone is always present and unambiguous; name isn't
                           always set (e.g. an admin account created without
                           ever filling one in) - fall back to phone as the
                           primary label instead of a bare "Unknown" */}
-                      <p className="font-medium text-gray-900">{log.admin?.name || log.admin?.phone || 'Unknown'}</p>
-                      {log.admin?.name && <p className="text-xs text-gray-500">{log.admin.phone}</p>}
+                      <p className="font-semibold text-slate-900">{log.admin?.name || log.admin?.phone || 'Unknown'}</p>
+                      {log.admin?.name && <p className="text-xs text-slate-400">{log.admin.phone}</p>}
                     </td>
-                    <td className="px-5 py-3">
-                      <span className="inline-flex px-2 py-0.5 text-xs font-medium rounded-full bg-blue-100 text-blue-700">
-                        {log.action.replace(/_/g, ' ')}
-                      </span>
+                    <td>
+                      <span className="badge-blue">{log.action.replace(/_/g, ' ')}</span>
                     </td>
-                    <td className="px-5 py-3 text-sm text-gray-600">
+                    <td className="text-slate-500">
                       {log.targetRecordType}
-                      <span className="ml-1.5 font-mono text-xs text-gray-400">#{log.targetRecordId.slice(0, 8)}</span>
+                      <span className="ml-1.5 font-mono text-xs text-slate-300">#{log.targetRecordId.slice(0, 8)}</span>
                     </td>
-                    <td className="px-5 py-3 text-xs text-gray-500 max-w-xs">
+                    <td className="max-w-xs text-xs text-slate-500">
                       {log.metadata ? (
                         <div className="space-y-0.5">
                           {Object.entries(log.metadata).map(([key, value]) => (
                             <div key={key} className="truncate">
-                              <span className="text-gray-400">{key.replace(/([A-Z])/g, ' $1').toLowerCase()}:</span>{' '}
-                              <span className="text-gray-700">{String(value)}</span>
+                              <span className="text-slate-400">{key.replace(/([A-Z])/g, ' $1').toLowerCase()}:</span>{' '}
+                              <span className="text-slate-700">{String(value)}</span>
                             </div>
                           ))}
                         </div>
@@ -196,14 +191,12 @@ export function AuditLogPage() {
             </table>
 
             {totalPages > 1 && (
-              <div className="flex items-center justify-between px-5 py-4 border-t border-gray-200 bg-gray-50">
-                <button disabled={page <= 1} onClick={() => fetchLogs(page - 1)}
-                  className="px-3 py-1 text-sm border border-gray-300 rounded-lg hover:bg-gray-100 disabled:opacity-40">
+              <div className="flex items-center justify-between border-t border-slate-100 px-5 py-4">
+                <button disabled={page <= 1} onClick={() => fetchLogs(page - 1)} className="btn-secondary btn-sm">
                   ← Prev
                 </button>
-                <span className="text-sm text-gray-600">Page {page} / {totalPages}</span>
-                <button disabled={page >= totalPages} onClick={() => fetchLogs(page + 1)}
-                  className="px-3 py-1 text-sm border border-gray-300 rounded-lg hover:bg-gray-100 disabled:opacity-40">
+                <span className="text-sm font-medium text-slate-500">Page {page} / {totalPages}</span>
+                <button disabled={page >= totalPages} onClick={() => fetchLogs(page + 1)} className="btn-secondary btn-sm">
                   Next →
                 </button>
               </div>

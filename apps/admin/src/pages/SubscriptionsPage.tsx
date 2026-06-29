@@ -108,16 +108,16 @@ export function SubscriptionsPage() {
   };
 
   return (
-    <div>
-      <div className="flex items-center justify-between mb-6">
+    <div className="space-y-6">
+      <div className="flex flex-wrap items-end justify-between gap-4">
         <div>
-          <h2 className="text-xl font-semibold text-gray-900">Subscriptions</h2>
-          <p className="text-gray-500">Manual subscription verification (Section 4A)</p>
+          <h1 className="text-2xl font-bold text-slate-900">Subscriptions</h1>
+          <p className="mt-1 text-sm text-slate-500">Manual subscription verification (Section 4A)</p>
         </div>
         <div className="flex gap-2">
           <BranchFilterSelect value={branchFilter} onChange={setBranchFilter} />
           <select
-            className="border border-gray-300 rounded-lg px-4 py-2 focus:outline-none focus:ring-2 focus:ring-primary-500"
+            className="input w-auto cursor-pointer"
             value={filter}
             onChange={(e) => setFilter(e.target.value as any)}
           >
@@ -129,83 +129,77 @@ export function SubscriptionsPage() {
         </div>
       </div>
 
-      <div className="grid grid-cols-3 gap-4 mb-6">
-        <div className="bg-white rounded-lg p-4 shadow">
-          <p className="text-2xl font-bold text-green-600">{stats.active}</p>
-          <p className="text-sm text-gray-500">Active</p>
+      <div className="grid grid-cols-3 gap-4">
+        <div className="card p-5">
+          <p className="text-3xl font-bold tracking-tight text-green-600">{stats.active}</p>
+          <p className="mt-0.5 text-sm font-medium text-slate-500">Active</p>
         </div>
-        <div className="bg-white rounded-lg p-4 shadow">
-          <p className="text-2xl font-bold text-red-600">{stats.expired}</p>
-          <p className="text-sm text-gray-500">Expired</p>
+        <div className="card p-5">
+          <p className="text-3xl font-bold tracking-tight text-red-600">{stats.expired}</p>
+          <p className="mt-0.5 text-sm font-medium text-slate-500">Expired</p>
         </div>
-        <div className="bg-white rounded-lg p-4 shadow">
-          <p className="text-2xl font-bold text-yellow-600">{stats.pending}</p>
-          <p className="text-sm text-gray-500">Pending Proof Review</p>
+        <div className="card p-5">
+          <p className="text-3xl font-bold tracking-tight text-amber-600">{stats.pending}</p>
+          <p className="mt-0.5 text-sm font-medium text-slate-500">Pending Proof Review</p>
         </div>
       </div>
 
-      <div className="bg-white rounded-xl overflow-hidden shadow">
+      <div className="card overflow-hidden">
         {isLoading ? (
-          <div className="text-center py-12 text-gray-500">
-            <span className="text-2xl block mb-2">⏳</span>
-            Loading subscriptions...
+          <div className="flex flex-col items-center gap-3 py-16 text-slate-400">
+            <div className="h-7 w-7 animate-spin rounded-full border-2 border-slate-200 border-t-primary-500" />
+            <span className="text-sm font-medium">Loading subscriptions…</span>
           </div>
         ) : filtered.length === 0 ? (
-          <div className="text-center py-12 text-gray-500">
-            <span className="text-4xl block mb-2">💳</span>
-            No drivers match this filter
+          <div className="py-16 text-center">
+            <span className="mb-2 block text-4xl">💳</span>
+            <span className="text-sm text-slate-400">No drivers match this filter</span>
           </div>
         ) : (
-          <table className="w-full">
-            <thead className="bg-gray-50 border-b border-gray-200">
+          <table className="table-modern">
+            <thead>
               <tr>
-                <th className="text-left px-6 py-4 text-sm font-medium text-gray-500">Driver</th>
-                <th className="text-left px-6 py-4 text-sm font-medium text-gray-500">Vehicle</th>
-                <th className="text-left px-6 py-4 text-sm font-medium text-gray-500">Status</th>
-                <th className="text-left px-6 py-4 text-sm font-medium text-gray-500">Period End</th>
-                <th className="text-left px-6 py-4 text-sm font-medium text-gray-500">Pending Proof</th>
-                <th className="text-right px-6 py-4 text-sm font-medium text-gray-500">Actions</th>
+                <th>Driver</th>
+                <th>Vehicle</th>
+                <th>Status</th>
+                <th>Period End</th>
+                <th>Pending Proof</th>
+                <th className="text-right">Actions</th>
               </tr>
             </thead>
-            <tbody className="divide-y divide-gray-200">
+            <tbody>
               {filtered.map((d) => {
                 const isProcessing = processingId === d.driverId;
                 const pending = d.pendingSubmissions[0];
                 return (
-                  <tr key={d.driverId} className="hover:bg-gray-50">
-                    <td className="px-6 py-4">
-                      <p className="font-medium text-gray-900">{d.name}</p>
-                      <p className="text-xs text-gray-500">{d.phone}</p>
+                  <tr key={d.driverId}>
+                    <td>
+                      <p className="font-semibold text-slate-900">{d.name}</p>
+                      <p className="text-xs text-slate-400">{d.phone}</p>
                     </td>
-                    <td className="px-6 py-4 text-sm text-gray-600">{d.vehicleType}</td>
-                    <td className="px-6 py-4">
-                      <span
-                        className={`inline-flex items-center gap-1 px-2 py-1 text-xs font-medium rounded-full ${
-                          d.subscriptionStatus === 'ACTIVE'
-                            ? 'bg-green-100 text-green-700'
-                            : 'bg-red-100 text-red-700'
-                        }`}
-                      >
+                    <td className="text-slate-500">{d.vehicleType}</td>
+                    <td>
+                      <span className={d.subscriptionStatus === 'ACTIVE' ? 'badge-green' : 'badge-red'}>
                         {d.subscriptionStatus === 'ACTIVE' ? '✓ Active' : '✕ Expired'}
                       </span>
                     </td>
-                    <td className="px-6 py-4 text-sm text-gray-600">
+                    <td className="text-slate-500">
                       {d.subscriptionPeriodEnd ? new Date(d.subscriptionPeriodEnd).toLocaleDateString() : '—'}
                     </td>
-                    <td className="px-6 py-4 text-sm">
+                    <td>
                       {pending ? (
-                        <span className="font-mono text-gray-800">{pending.reference}</span>
+                        <span className="font-mono text-xs text-slate-700">{pending.reference}</span>
                       ) : (
-                        <span className="text-gray-400">—</span>
+                        <span className="text-slate-300">—</span>
                       )}
                     </td>
-                    <td className="px-6 py-4 text-right">
+                    <td className="text-right">
                       <div className="flex justify-end gap-2">
                         {pending && (
                           <button
                             onClick={() => handleReject(pending.id, d.driverId)}
                             disabled={isProcessing}
-                            className="px-3 py-1 bg-gray-500 text-white text-sm rounded-lg hover:bg-gray-600 disabled:opacity-50"
+                            className="btn-secondary btn-sm"
                           >
                             Reject
                           </button>
@@ -213,9 +207,9 @@ export function SubscriptionsPage() {
                         <button
                           onClick={() => handleMarkPaid(d.driverId, pending?.id)}
                           disabled={isProcessing}
-                          className="px-3 py-1 bg-green-500 text-white text-sm rounded-lg hover:bg-green-600 disabled:opacity-50"
+                          className="btn btn-sm bg-green-500 text-white hover:bg-green-600"
                         >
-                          {isProcessing ? '...' : 'Mark Paid'}
+                          {isProcessing ? '…' : 'Mark Paid'}
                         </button>
                       </div>
                     </td>

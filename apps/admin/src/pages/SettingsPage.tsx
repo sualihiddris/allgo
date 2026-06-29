@@ -73,62 +73,58 @@ export function SettingsPage() {
   };
 
   return (
-    <div className="max-w-2xl">
-      <div className="mb-6">
-        <h2 className="text-xl font-semibold text-gray-900">Settings</h2>
-        <p className="text-gray-500">Manage your admin account</p>
+    <div className="max-w-2xl space-y-6">
+      <div>
+        <h1 className="text-2xl font-bold text-slate-900">Settings</h1>
+        <p className="mt-1 text-sm text-slate-500">Manage your admin account</p>
       </div>
 
-      <div className="bg-white rounded-xl p-6 shadow mb-6">
-        <h3 className="font-semibold text-gray-900 mb-4">Account</h3>
-        <div className="space-y-2 text-sm">
-          <p>
-            <span className="text-gray-500">Name:</span> {user?.name || 'Admin'}
-          </p>
-          <p>
-            <span className="text-gray-500">Phone:</span> {user?.phone}
-          </p>
-        </div>
+      <div className="card p-6">
+        <h3 className="mb-4 font-semibold text-slate-900">Account</h3>
+        <dl className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+          <div>
+            <dt className="text-xs font-semibold uppercase tracking-wide text-slate-400">Name</dt>
+            <dd className="mt-1 text-sm font-medium text-slate-900">{user?.name || 'Admin'}</dd>
+          </div>
+          <div>
+            <dt className="text-xs font-semibold uppercase tracking-wide text-slate-400">Phone</dt>
+            <dd className="mt-1 text-sm font-medium text-slate-900">{user?.phone}</dd>
+          </div>
+        </dl>
       </div>
 
-      <div className="bg-white rounded-xl p-6 shadow">
-        <h3 className="font-semibold text-gray-900 mb-2">Two-Factor Authentication</h3>
-        <p className="text-sm text-gray-500 mb-4">
+      <div className="card p-6">
+        <h3 className="font-semibold text-slate-900">Two-Factor Authentication</h3>
+        <p className="mb-4 mt-1 text-sm text-slate-500">
           Require an authenticator app code in addition to your phone OTP when signing in.
         </p>
 
         {error && (
-          <div className="bg-red-50 border border-red-200 text-red-600 px-4 py-3 rounded-lg mb-4 text-sm">
+          <div className="mb-4 rounded-xl bg-red-50 px-4 py-3 text-sm text-red-600 ring-1 ring-red-100">
             {error}
           </div>
         )}
 
         {isLoading ? (
-          <p className="text-sm text-gray-500">Loading...</p>
+          <p className="text-sm text-slate-400">Loading…</p>
         ) : is2faEnabled ? (
           <div className="flex items-center justify-between">
-            <span className="inline-flex items-center gap-1 px-3 py-1 bg-green-100 text-green-700 text-sm font-medium rounded-full">
-              ✓ Enabled
-            </span>
-            <button
-              onClick={handleDisable}
-              disabled={isSubmitting}
-              className="px-4 py-2 bg-red-500 text-white text-sm rounded-lg hover:bg-red-600 disabled:opacity-50"
-            >
+            <span className="badge-green"><span className="badge-dot bg-green-500" /> Enabled</span>
+            <button onClick={handleDisable} disabled={isSubmitting} className="btn-danger">
               Disable
             </button>
           </div>
         ) : setupData ? (
           <div>
-            <p className="text-sm text-gray-700 mb-3">
+            <p className="mb-3 text-sm text-slate-600">
               Scan this QR code with Google Authenticator, Authy, or any TOTP app:
             </p>
-            <img src={setupData.qrCode} alt="2FA QR code" className="border border-gray-200 rounded-lg mb-3" />
-            <p className="text-xs text-gray-500 mb-4">
-              Can't scan? Enter this code manually: <code className="bg-gray-100 px-1 rounded">{setupData.secret}</code>
+            <img src={setupData.qrCode} alt="2FA QR code" className="mb-3 rounded-xl ring-1 ring-slate-200" />
+            <p className="mb-4 text-xs text-slate-400">
+              Can't scan? Enter this code manually: <code className="rounded bg-slate-100 px-1.5 py-0.5 font-mono text-slate-700">{setupData.secret}</code>
             </p>
 
-            <label className="block mb-2 text-sm font-medium text-gray-700">
+            <label className="mb-2 block text-sm font-medium text-slate-600">
               Enter the 6-digit code to confirm
             </label>
             <div className="flex gap-2">
@@ -138,26 +134,17 @@ export function SettingsPage() {
                 onChange={(e) => setCode(e.target.value)}
                 placeholder="000000"
                 maxLength={6}
-                className="flex-1 border border-gray-300 rounded-lg px-4 py-2 text-center text-lg tracking-widest focus:outline-none focus:ring-2 focus:ring-primary-500"
+                className="input flex-1 text-center text-lg tracking-[0.4em]"
               />
-              <button
-                onClick={handleConfirmEnable}
-                disabled={isSubmitting || code.length !== 6}
-                className="px-4 py-2 bg-primary-500 text-white text-sm rounded-lg hover:bg-primary-600 disabled:opacity-50"
-              >
-                {isSubmitting ? 'Verifying...' : 'Confirm & Enable'}
+              <button onClick={handleConfirmEnable} disabled={isSubmitting || code.length !== 6} className="btn-primary shrink-0">
+                {isSubmitting ? 'Verifying…' : 'Confirm & Enable'}
               </button>
             </div>
           </div>
         ) : (
           <div className="flex items-center justify-between">
-            <span className="inline-flex items-center gap-1 px-3 py-1 bg-yellow-100 text-yellow-700 text-sm font-medium rounded-full">
-              Not enabled
-            </span>
-            <button
-              onClick={handleStartSetup}
-              className="px-4 py-2 bg-primary-500 text-white text-sm rounded-lg hover:bg-primary-600"
-            >
+            <span className="badge-amber">Not enabled</span>
+            <button onClick={handleStartSetup} className="btn-primary">
               Enable 2FA
             </button>
           </div>

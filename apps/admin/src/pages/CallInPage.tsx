@@ -198,8 +198,8 @@ export function CallInPage() {
   return (
     <div className="max-w-2xl mx-auto">
       <div className="mb-6">
-        <h1 className="text-2xl font-bold text-gray-900">📞 New Call-In Trip</h1>
-        <p className="text-gray-600 mt-1">
+        <h1 className="text-2xl font-bold text-slate-900">📞 New Call-In Trip</h1>
+        <p className="mt-1 text-sm text-slate-500">
           Create a trip for a phone caller. Fill quickly — caller is waiting.
         </p>
       </div>
@@ -279,8 +279,8 @@ export function CallInPage() {
       {!createdTrip && (
         <form onSubmit={handleSubmit} className="space-y-4">
           {/* Caller Info */}
-          <div className="bg-white rounded-xl shadow p-4">
-            <h3 className="font-semibold text-gray-900 mb-3">📱 Caller Info</h3>
+          <div className="card p-5">
+            <h3 className="mb-4 font-semibold text-slate-900">📱 Caller Info</h3>
             <div className="grid grid-cols-2 gap-4">
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">
@@ -291,7 +291,7 @@ export function CallInPage() {
                   value={callerPhone}
                   onChange={(e) => setCallerPhone(e.target.value)}
                   placeholder="0XX XXX XXXX"
-                  className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-transparent text-lg"
+                  className="input py-3 text-lg"
                   required
                 />
               </div>
@@ -304,15 +304,15 @@ export function CallInPage() {
                   value={callerName}
                   onChange={(e) => setCallerName(e.target.value)}
                   placeholder="Caller's name"
-                  className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-transparent"
+                  className="input py-3"
                 />
               </div>
             </div>
           </div>
 
           {/* Locations */}
-          <div className="bg-white rounded-xl shadow p-4">
-            <h3 className="font-semibold text-gray-900 mb-3">📍 Locations</h3>
+          <div className="card p-5">
+            <h3 className="mb-4 font-semibold text-slate-900">📍 Locations</h3>
             <div className="space-y-3">
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">
@@ -323,7 +323,7 @@ export function CallInPage() {
                   value={pickupAddress}
                   onChange={(e) => setPickupAddress(e.target.value)}
                   placeholder="e.g., Near the market, behind Total filling station"
-                  className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-transparent"
+                  className="input py-3"
                   required
                 />
               </div>
@@ -336,7 +336,7 @@ export function CallInPage() {
                   value={destinationAddress}
                   onChange={(e) => setDestinationAddress(e.target.value)}
                   placeholder="e.g., Tema Station, near the lorry park"
-                  className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-transparent"
+                  className="input py-3"
                   required
                 />
               </div>
@@ -344,8 +344,8 @@ export function CallInPage() {
           </div>
 
           {/* Vehicle Type */}
-          <div className="bg-white rounded-xl shadow p-4">
-            <h3 className="font-semibold text-gray-900 mb-3">🚗 Vehicle Type</h3>
+          <div className="card p-5">
+            <h3 className="mb-4 font-semibold text-slate-900">🚗 Vehicle Type</h3>
             <div className="grid grid-cols-3 gap-3">
               {[
                 { type: 'MOTO', label: '🏍️ Moto', desc: '1 person' },
@@ -356,15 +356,15 @@ export function CallInPage() {
                   key={v.type}
                   type="button"
                   onClick={() => setVehicleType(v.type as VehicleType)}
-                  className={`p-4 rounded-lg border-2 transition-all text-center ${
+                  className={`rounded-xl border p-4 text-center transition ${
                     vehicleType === v.type
-                      ? 'border-primary-500 bg-primary-50'
-                      : 'border-gray-200 hover:border-gray-300'
+                      ? 'border-primary-500 bg-primary-50 ring-1 ring-primary-200'
+                      : 'border-slate-200 hover:border-slate-300 hover:bg-slate-50'
                   }`}
                 >
-                  <span className="text-2xl block mb-1">{v.label.split(' ')[0]}</span>
-                  <span className="font-medium">{v.label.split(' ').slice(1).join(' ')}</span>
-                  <span className="text-xs text-gray-500 block">{v.desc}</span>
+                  <span className="mb-1 block text-2xl">{v.label.split(' ')[0]}</span>
+                  <span className="text-sm font-semibold text-slate-800">{v.label.split(' ').slice(1).join(' ')}</span>
+                  <span className="block text-xs text-slate-400">{v.desc}</span>
                 </button>
               ))}
             </div>
@@ -372,41 +372,32 @@ export function CallInPage() {
 
           {/* MOTO: Service Type */}
           {vehicleType === 'MOTO' && (
-            <div className="bg-white rounded-xl shadow p-4">
-              <h3 className="font-semibold text-gray-900 mb-3">What is this for?</h3>
+            <div className="card p-5">
+              <h3 className="mb-4 font-semibold text-slate-900">What is this for?</h3>
               <div className="grid grid-cols-2 gap-3">
-                <button
-                  type="button"
-                  onClick={() => setServiceType('PASSENGER')}
-                  className={`p-4 rounded-lg border-2 transition-all ${
-                    serviceType === 'PASSENGER'
-                      ? 'border-primary-500 bg-primary-50'
-                      : 'border-gray-200 hover:border-gray-300'
-                  }`}
-                >
-                  <span className="text-2xl block mb-1">👤</span>
-                  <span className="font-medium">Passenger Ride</span>
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setServiceType('DELIVERY')}
-                  className={`p-4 rounded-lg border-2 transition-all ${
-                    serviceType === 'DELIVERY'
-                      ? 'border-primary-500 bg-primary-50'
-                      : 'border-gray-200 hover:border-gray-300'
-                  }`}
-                >
-                  <span className="text-2xl block mb-1">📦</span>
-                  <span className="font-medium">Delivery</span>
-                </button>
+                {([['PASSENGER', '👤', 'Passenger Ride'], ['DELIVERY', '📦', 'Delivery']] as const).map(([t, icon, label]) => (
+                  <button
+                    key={t}
+                    type="button"
+                    onClick={() => setServiceType(t)}
+                    className={`rounded-xl border p-4 text-center transition ${
+                      serviceType === t
+                        ? 'border-primary-500 bg-primary-50 ring-1 ring-primary-200'
+                        : 'border-slate-200 hover:border-slate-300 hover:bg-slate-50'
+                    }`}
+                  >
+                    <span className="mb-1 block text-2xl">{icon}</span>
+                    <span className="text-sm font-semibold text-slate-800">{label}</span>
+                  </button>
+                ))}
               </div>
             </div>
           )}
 
           {/* MOTO Delivery: Item Type */}
           {vehicleType === 'MOTO' && serviceType === 'DELIVERY' && (
-            <div className="bg-white rounded-xl shadow p-4">
-              <h3 className="font-semibold text-gray-900 mb-3">📦 What are they sending?</h3>
+            <div className="card p-5">
+              <h3 className="mb-4 font-semibold text-slate-900">📦 What are they sending?</h3>
               <div className="grid grid-cols-2 gap-3">
                 {[
                   { type: 'FOOD', label: '🍲 Food' },
@@ -418,10 +409,10 @@ export function CallInPage() {
                     key={d.type}
                     type="button"
                     onClick={() => setDeliveryType(d.type as DeliveryType)}
-                    className={`p-3 rounded-lg border-2 transition-all ${
+                    className={`rounded-xl border p-3 text-sm font-medium transition ${
                       deliveryType === d.type
-                        ? 'border-primary-500 bg-primary-50'
-                        : 'border-gray-200 hover:border-gray-300'
+                        ? 'border-primary-500 bg-primary-50 ring-1 ring-primary-200 text-slate-800'
+                        : 'border-slate-200 text-slate-600 hover:border-slate-300 hover:bg-slate-50'
                     }`}
                   >
                     {d.label}
@@ -436,7 +427,7 @@ export function CallInPage() {
                     value={itemDescription}
                     onChange={(e) => setItemDescription(e.target.value)}
                     placeholder="Describe the item..."
-                    className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-transparent"
+                    className="input py-3"
                     required={deliveryType === 'OTHER'}
                   />
                 </div>
@@ -445,14 +436,14 @@ export function CallInPage() {
           )}
 
           {/* Notes */}
-          <div className="bg-white rounded-xl shadow p-4">
-            <h3 className="font-semibold text-gray-900 mb-3">📝 Notes (optional)</h3>
+          <div className="card p-5">
+            <h3 className="mb-4 font-semibold text-slate-900">📝 Notes (optional)</h3>
             <input
               type="text"
               value={customerNote}
               onChange={(e) => setCustomerNote(e.target.value)}
               placeholder="e.g., Wearing red shirt, near the big tree"
-              className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-transparent"
+              className="input py-3"
             />
           </div>
 
@@ -460,13 +451,9 @@ export function CallInPage() {
           <button
             type="submit"
             disabled={isSubmitting}
-            className={`w-full py-5 rounded-xl text-white font-bold text-xl transition-all ${
-              isSubmitting
-                ? 'bg-gray-400 cursor-not-allowed'
-                : 'bg-primary-600 hover:bg-primary-700 active:scale-98'
-            }`}
+            className="btn w-full bg-primary-600 py-4 text-lg text-white shadow-sm shadow-orange-500/25 hover:bg-primary-700"
           >
-            {isSubmitting ? '⏳ Creating Trip...' : '📞 Create Trip'}
+            {isSubmitting ? '⏳ Creating Trip…' : '📞 Create Trip'}
           </button>
         </form>
       )}

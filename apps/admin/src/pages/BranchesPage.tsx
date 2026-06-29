@@ -107,55 +107,52 @@ export function BranchesPage() {
   };
 
   return (
-    <div>
-      <div className="mb-6">
-        <h2 className="text-xl font-semibold text-gray-900">Branches</h2>
-        <p className="text-gray-500">Manage branches and branch admin accounts (Section 4B)</p>
+    <div className="space-y-6">
+      <div>
+        <h1 className="text-2xl font-bold text-slate-900">Branches</h1>
+        <p className="mt-1 text-sm text-slate-500">Manage branches and branch admin accounts (Section 4B)</p>
       </div>
 
       {/* Branches */}
-      <div className="bg-white rounded-xl shadow p-6 mb-6">
-        <h3 className="font-semibold text-gray-900 mb-4">Branches</h3>
-        <div className="flex gap-2 mb-4">
+      <div className="card p-6">
+        <h3 className="mb-4 font-semibold text-slate-900">Branches</h3>
+        <div className="mb-5 flex flex-wrap gap-2">
           <input
             placeholder="Branch name (e.g. Kumasi)"
             value={newBranchName}
             onChange={(e) => setNewBranchName(e.target.value)}
-            className="border border-gray-300 rounded-lg px-3 py-2 text-sm flex-1"
+            className="input flex-1"
           />
           <input
             placeholder="Region (e.g. Ashanti)"
             value={newBranchRegion}
             onChange={(e) => setNewBranchRegion(e.target.value)}
-            className="border border-gray-300 rounded-lg px-3 py-2 text-sm flex-1"
+            className="input flex-1"
           />
-          <button
-            onClick={handleCreateBranch}
-            className="px-4 py-2 bg-primary-500 text-white text-sm rounded-lg hover:bg-primary-600"
-          >
+          <button onClick={handleCreateBranch} className="btn-primary">
             Add Branch
           </button>
         </div>
 
         {isLoading ? (
-          <p className="text-sm text-gray-500">Loading...</p>
+          <p className="py-4 text-sm text-slate-400">Loading…</p>
         ) : (
-          <table className="w-full">
-            <thead className="bg-gray-50 border-b border-gray-200">
+          <table className="table-modern">
+            <thead>
               <tr>
-                <th className="text-left px-4 py-2 text-xs font-medium text-gray-500">Name</th>
-                <th className="text-left px-4 py-2 text-xs font-medium text-gray-500">Region</th>
-                <th className="text-left px-4 py-2 text-xs font-medium text-gray-500">Drivers</th>
-                <th className="text-left px-4 py-2 text-xs font-medium text-gray-500">Admins</th>
+                <th>Name</th>
+                <th>Region</th>
+                <th>Drivers</th>
+                <th>Admins</th>
               </tr>
             </thead>
-            <tbody className="divide-y divide-gray-100">
+            <tbody>
               {branches.map((b) => (
                 <tr key={b.id}>
-                  <td className="px-4 py-2 text-sm font-medium text-gray-900">{b.name}</td>
-                  <td className="px-4 py-2 text-sm text-gray-600">{b.region}</td>
-                  <td className="px-4 py-2 text-sm text-gray-600">{b.driverCount}</td>
-                  <td className="px-4 py-2 text-sm text-gray-600">{b.adminCount}</td>
+                  <td className="font-semibold text-slate-900">{b.name}</td>
+                  <td className="text-slate-500">{b.region}</td>
+                  <td className="font-medium">{b.driverCount}</td>
+                  <td className="font-medium">{b.adminCount}</td>
                 </tr>
               ))}
             </tbody>
@@ -164,78 +161,70 @@ export function BranchesPage() {
       </div>
 
       {/* Branch Admins */}
-      <div className="bg-white rounded-xl shadow p-6">
-        <h3 className="font-semibold text-gray-900 mb-4">Branch Admin Accounts</h3>
-        <div className="flex gap-2 mb-4">
+      <div className="card p-6">
+        <h3 className="mb-4 font-semibold text-slate-900">Branch Admin Accounts</h3>
+        <div className="mb-5 flex flex-wrap gap-2">
           <input
             placeholder="Phone (e.g. 0244999888)"
             value={newAdminPhone}
             onChange={(e) => setNewAdminPhone(e.target.value)}
-            className="border border-gray-300 rounded-lg px-3 py-2 text-sm flex-1"
+            className="input flex-1"
           />
           <input
             placeholder="Name"
             value={newAdminName}
             onChange={(e) => setNewAdminName(e.target.value)}
-            className="border border-gray-300 rounded-lg px-3 py-2 text-sm flex-1"
+            className="input flex-1"
           />
           <select
             value={newAdminBranchId}
             onChange={(e) => setNewAdminBranchId(e.target.value)}
-            className="border border-gray-300 rounded-lg px-3 py-2 text-sm"
+            className="input w-auto cursor-pointer"
           >
-            <option value="">Select branch...</option>
+            <option value="">Select branch…</option>
             {branches.map((b) => (
               <option key={b.id} value={b.id}>{b.name}</option>
             ))}
           </select>
-          <button
-            onClick={handleCreateAdmin}
-            className="px-4 py-2 bg-primary-500 text-white text-sm rounded-lg hover:bg-primary-600"
-          >
+          <button onClick={handleCreateAdmin} className="btn-primary">
             Add Admin
           </button>
         </div>
 
         {isLoading ? (
-          <p className="text-sm text-gray-500">Loading...</p>
+          <p className="py-4 text-sm text-slate-400">Loading…</p>
         ) : admins.length === 0 ? (
-          <p className="text-sm text-gray-400 text-center py-6">No branch admins yet</p>
+          <p className="py-8 text-center text-sm text-slate-400">No branch admins yet</p>
         ) : (
-          <table className="w-full">
-            <thead className="bg-gray-50 border-b border-gray-200">
+          <table className="table-modern">
+            <thead>
               <tr>
-                <th className="text-left px-4 py-2 text-xs font-medium text-gray-500">Name</th>
-                <th className="text-left px-4 py-2 text-xs font-medium text-gray-500">Phone</th>
-                <th className="text-left px-4 py-2 text-xs font-medium text-gray-500">Branch</th>
-                <th className="text-left px-4 py-2 text-xs font-medium text-gray-500">Status</th>
-                <th className="text-right px-4 py-2 text-xs font-medium text-gray-500">Actions</th>
+                <th>Name</th>
+                <th>Phone</th>
+                <th>Branch</th>
+                <th>Status</th>
+                <th className="text-right">Actions</th>
               </tr>
             </thead>
-            <tbody className="divide-y divide-gray-100">
+            <tbody>
               {admins.map((a) => (
                 <tr key={a.adminId}>
-                  <td className="px-4 py-2 text-sm font-medium text-gray-900">{a.name}</td>
-                  <td className="px-4 py-2 text-sm text-gray-600">{a.phone}</td>
-                  <td className="px-4 py-2 text-sm text-gray-600">{a.branch?.name || '—'}</td>
-                  <td className="px-4 py-2">
-                    <span className={`inline-flex px-2 py-0.5 text-xs font-medium rounded-full ${a.isActive ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-600'}`}>
+                  <td className="font-semibold text-slate-900">{a.name}</td>
+                  <td className="text-slate-500">{a.phone}</td>
+                  <td className="text-slate-500">{a.branch?.name || '—'}</td>
+                  <td>
+                    <span className={a.isActive ? 'badge-green' : 'badge-slate'}>
+                      <span className={`badge-dot ${a.isActive ? 'bg-green-500' : 'bg-slate-400'}`} />
                       {a.isActive ? 'Active' : 'Deactivated'}
                     </span>
                   </td>
-                  <td className="px-4 py-2 text-right">
+                  <td className="text-right">
                     <div className="flex justify-end gap-2">
-                      <Link
-                        to={`/audit-log?adminUserId=${a.userId}`}
-                        className="px-3 py-1 bg-white border border-gray-300 text-gray-700 text-xs rounded-lg hover:bg-gray-50"
-                      >
+                      <Link to={`/audit-log?adminUserId=${a.userId}`} className="btn-secondary btn-sm">
                         View Activity
                       </Link>
                       {a.isActive && (
-                        <button
-                          onClick={() => handleDeactivate(a.adminId)}
-                          className="px-3 py-1 bg-gray-500 text-white text-xs rounded-lg hover:bg-gray-600"
-                        >
+                        <button onClick={() => handleDeactivate(a.adminId)} className="btn-secondary btn-sm">
                           Deactivate
                         </button>
                       )}

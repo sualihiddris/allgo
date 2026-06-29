@@ -103,42 +103,43 @@ export function DeliveriesPage() {
   );
 
   return (
-    <div>
-      <div className="flex items-center justify-between mb-6">
+    <div className="space-y-6">
+      <div className="flex flex-wrap items-end justify-between gap-4">
         <div>
-          <h2 className="text-xl font-semibold text-gray-900">Deliveries</h2>
-          <p className="text-gray-500">MOTO delivery trips (Food, Groceries, Parcels, Other)</p>
+          <h1 className="text-2xl font-bold text-slate-900">Deliveries</h1>
+          <p className="mt-1 text-sm text-slate-500">MOTO delivery trips (Food, Groceries, Parcels, Other)</p>
         </div>
-        <button onClick={() => fetchDeliveries(pagination.page)} className="px-4 py-2 bg-gray-100 text-gray-600 rounded-lg hover:bg-gray-200 transition-colors font-medium">
+        <button onClick={() => fetchDeliveries(pagination.page)} className="btn-secondary">
           🔄 Refresh
         </button>
       </div>
 
-      <div className="grid grid-cols-5 gap-4 mb-6">
-        <div className="bg-white rounded-lg p-4 shadow">
-          <p className="text-2xl font-bold text-gray-900">{pagination.totalCount}</p>
-          <p className="text-sm text-gray-500">Total Deliveries</p>
+      <div className="grid grid-cols-2 gap-4 md:grid-cols-5">
+        <div className="card p-5">
+          <p className="text-3xl font-bold tracking-tight text-slate-900">{pagination.totalCount}</p>
+          <p className="mt-0.5 text-sm font-medium text-slate-500">Total Deliveries</p>
         </div>
         {(['FOOD', 'GROCERIES', 'PARCELS', 'OTHER'] as const).map((type) => (
-          <div key={type} className="bg-white rounded-lg p-4 shadow">
-            <p className="text-2xl font-bold text-gray-900">{DELIVERY_ICONS[type]} {typeCounts[type] || 0}</p>
-            <p className="text-sm text-gray-500">{type}</p>
+          <div key={type} className="card p-5">
+            <p className="text-3xl font-bold tracking-tight text-slate-900">
+              <span className="mr-1 text-2xl">{DELIVERY_ICONS[type]}</span>{typeCounts[type] || 0}
+            </p>
+            <p className="mt-0.5 text-xs font-medium uppercase tracking-wide text-slate-400">{type}</p>
           </div>
         ))}
       </div>
 
-      <div className="bg-white rounded-xl shadow p-4 mb-6">
+      <div className="card p-4">
         <div className="flex flex-wrap items-end gap-3">
           {isSuperAdmin && (
             <div>
-              <label className="block text-xs font-medium text-gray-500 mb-1">Branch</label>
+              <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-slate-400">Branch</label>
               <BranchFilterSelect value={branchFilter} onChange={setBranchFilter} />
             </div>
           )}
           <div>
-            <label className="block text-xs font-medium text-gray-500 mb-1">Status</label>
-            <select value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)}
-              className="border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary-500">
+            <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-slate-400">Status</label>
+            <select value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)} className="input w-auto cursor-pointer">
               <option value="ALL">All Status</option>
               <option value="REQUESTED">🔵 Requested</option>
               <option value="ACCEPTED">🟣 Accepted</option>
@@ -148,9 +149,8 @@ export function DeliveriesPage() {
             </select>
           </div>
           <div>
-            <label className="block text-xs font-medium text-gray-500 mb-1">Type</label>
-            <select value={typeFilter} onChange={(e) => setTypeFilter(e.target.value)}
-              className="border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary-500">
+            <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-slate-400">Type</label>
+            <select value={typeFilter} onChange={(e) => setTypeFilter(e.target.value)} className="input w-auto cursor-pointer">
               <option value="ALL">All Types</option>
               <option value="FOOD">🍜 Food</option>
               <option value="GROCERIES">🛒 Groceries</option>
@@ -160,76 +160,77 @@ export function DeliveriesPage() {
           </div>
         </div>
         {(branchFilter || !isSuperAdmin) && (
-          <p className="mt-2 text-xs text-gray-400">
+          <p className="mt-3 text-xs text-slate-400">
             Unassigned deliveries (no driver yet) don't belong to a branch and won't appear while {isSuperAdmin ? 'a branch filter is active' : 'viewing your branch'}.
           </p>
         )}
       </div>
 
-      <div className="bg-white rounded-xl overflow-hidden shadow">
+      <div className="card overflow-hidden">
         {isLoading ? (
-          <div className="text-center py-16 text-gray-500">
-            <span className="text-2xl block mb-2">⏳</span>Loading deliveries…
+          <div className="flex flex-col items-center gap-3 py-16 text-slate-400">
+            <div className="h-7 w-7 animate-spin rounded-full border-2 border-slate-200 border-t-primary-500" />
+            <span className="text-sm font-medium">Loading deliveries…</span>
           </div>
         ) : deliveries.length === 0 ? (
-          <div className="text-center py-16 text-gray-500">
-            <span className="text-4xl block mb-2">📦</span>
-            No deliveries match your filters
+          <div className="py-16 text-center">
+            <span className="mb-2 block text-4xl">📦</span>
+            <span className="text-sm text-slate-400">No deliveries match your filters</span>
           </div>
         ) : (
-          <table className="w-full">
-            <thead className="bg-gray-50 border-b border-gray-200">
+          <table className="table-modern">
+            <thead>
               <tr>
-                <th className="text-left px-5 py-3 text-xs font-medium text-gray-500 uppercase tracking-wider">Item</th>
-                <th className="text-left px-5 py-3 text-xs font-medium text-gray-500 uppercase tracking-wider">Customer</th>
-                <th className="text-left px-5 py-3 text-xs font-medium text-gray-500 uppercase tracking-wider">Driver</th>
-                <th className="text-left px-5 py-3 text-xs font-medium text-gray-500 uppercase tracking-wider">Route</th>
-                <th className="text-left px-5 py-3 text-xs font-medium text-gray-500 uppercase tracking-wider">Status</th>
-                <th className="text-left px-5 py-3 text-xs font-medium text-gray-500 uppercase tracking-wider">Time</th>
+                <th>Item</th>
+                <th>Customer</th>
+                <th>Driver</th>
+                <th>Route</th>
+                <th>Status</th>
+                <th>Time</th>
               </tr>
             </thead>
-            <tbody className="divide-y divide-gray-100">
+            <tbody>
               {deliveries.map((d) => {
                 const statusCfg = STATUS_CONFIG[d.status] || STATUS_CONFIG.REQUESTED;
                 return (
-                  <tr key={d.id} className="hover:bg-gray-50">
-                    <td className="px-5 py-4">
-                      <div className="flex items-center gap-2">
+                  <tr key={d.id}>
+                    <td>
+                      <div className="flex items-center gap-2.5">
                         <span className="text-xl">{d.deliveryType ? DELIVERY_ICONS[d.deliveryType] : '📦'}</span>
                         <div>
-                          <p className="text-sm font-medium text-gray-900">{d.deliveryType || 'Delivery'}</p>
-                          {d.itemDescription && <p className="text-xs text-gray-500">{d.itemDescription}</p>}
+                          <p className="font-semibold text-slate-900">{d.deliveryType || 'Delivery'}</p>
+                          {d.itemDescription && <p className="text-xs text-slate-400">{d.itemDescription}</p>}
                         </div>
                       </div>
                     </td>
-                    <td className="px-5 py-4">
+                    <td>
                       {d.customer ? (
                         <div>
-                          <p className="text-sm font-medium text-gray-900">{d.customer.name || 'Unknown'}</p>
-                          <p className="text-xs text-gray-500">{d.customer.phone}</p>
+                          <p className="font-semibold text-slate-900">{d.customer.name || 'Unknown'}</p>
+                          <p className="text-xs text-slate-400">{d.customer.phone}</p>
                         </div>
-                      ) : <span className="text-sm text-gray-400">—</span>}
+                      ) : <span className="text-slate-300">—</span>}
                     </td>
-                    <td className="px-5 py-4">
+                    <td>
                       {d.driver ? (
                         <div>
-                          <p className="text-sm font-medium text-gray-900">{d.driver.name || 'Unknown'}</p>
-                          <p className="text-xs text-gray-500">{d.driver.phone}</p>
+                          <p className="font-semibold text-slate-900">{d.driver.name || 'Unknown'}</p>
+                          <p className="text-xs text-slate-400">{d.driver.phone}</p>
                         </div>
-                      ) : <span className="text-sm text-gray-400 italic">Unassigned</span>}
+                      ) : <span className="italic text-slate-300">Unassigned</span>}
                     </td>
-                    <td className="px-5 py-4">
+                    <td>
                       <div className="max-w-[200px]">
-                        <p className="text-sm text-gray-800 truncate" title={d.pickup.address}>📍 {d.pickup.address}</p>
-                        <p className="text-sm text-gray-600 truncate" title={d.destination.address}>📌 {d.destination.address}</p>
+                        <p className="truncate text-slate-700" title={d.pickup.address}>📍 {d.pickup.address}</p>
+                        <p className="truncate text-slate-500" title={d.destination.address}>📌 {d.destination.address}</p>
                       </div>
                     </td>
-                    <td className="px-5 py-4">
-                      <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${statusCfg.bg} ${statusCfg.color}`}>
+                    <td>
+                      <span className={`badge ${statusCfg.bg} ${statusCfg.color}`}>
                         {statusCfg.label}
                       </span>
                     </td>
-                    <td className="px-5 py-4 text-sm text-gray-600">{timeAgo(d.createdAt)}</td>
+                    <td className="text-slate-400">{timeAgo(d.createdAt)}</td>
                   </tr>
                 );
               })}
