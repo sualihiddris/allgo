@@ -136,9 +136,10 @@ const styles = StyleSheet.create({
     alignItems: "center",
     borderWidth: 1,
     borderColor: COLORS.border,
-    borderRadius: 12,
+    borderRadius: 16,
     paddingHorizontal: SPACING.md,
     marginBottom: SPACING.xl,
+    backgroundColor: COLORS.surface,
   },
   prefix: {
     fontSize: 18,
@@ -154,12 +155,21 @@ const styles = StyleSheet.create({
   button: {
     backgroundColor: COLORS.primary,
     paddingVertical: SPACING.md,
-    borderRadius: 12,
+    minHeight: 54,
+    borderRadius: 16,
     alignItems: "center",
+    justifyContent: "center",
     marginBottom: SPACING.md,
+    shadowColor: COLORS.primary,
+    shadowOffset: { width: 0, height: 6 },
+    shadowOpacity: 0.28,
+    shadowRadius: 14,
+    elevation: 4,
   },
   buttonDisabled: {
     backgroundColor: COLORS.disabled,
+    shadowOpacity: 0,
+    elevation: 0,
   },
   buttonText: {
     color: COLORS.textInverse,
@@ -169,7 +179,7 @@ const styles = StyleSheet.create({
   devButton: {
     backgroundColor: COLORS.deep,
     paddingVertical: SPACING.md,
-    borderRadius: 12,
+    borderRadius: 16,
     alignItems: "center",
     marginBottom: SPACING.lg,
   },

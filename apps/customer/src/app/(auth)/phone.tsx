@@ -144,9 +144,10 @@ function createStyles(theme: CustomerTheme) {
     alignItems: "center",
     borderWidth: 1,
     borderColor: theme.border,
-    borderRadius: 12,
+    borderRadius: 16,
     paddingHorizontal: SPACING.md,
     marginBottom: SPACING.sm,
+    backgroundColor: theme.surface,
   },
   prefix: {
     fontSize: 18,
@@ -167,12 +168,21 @@ function createStyles(theme: CustomerTheme) {
   button: {
     backgroundColor: theme.primary,
     paddingVertical: SPACING.md,
-    borderRadius: 12,
+    minHeight: 54,
+    borderRadius: 16,
     alignItems: "center",
+    justifyContent: "center",
     marginBottom: SPACING.md,
+    shadowColor: theme.primary,
+    shadowOffset: { width: 0, height: 6 },
+    shadowOpacity: 0.28,
+    shadowRadius: 14,
+    elevation: 4,
   },
   buttonDisabled: {
     backgroundColor: theme.disabled,
+    shadowOpacity: 0,
+    elevation: 0,
   },
   buttonText: {
     color: theme.textInverse,
@@ -182,7 +192,7 @@ function createStyles(theme: CustomerTheme) {
   devButton: {
     backgroundColor: theme.deep,
     paddingVertical: SPACING.md,
-    borderRadius: 12,
+    borderRadius: 16,
     alignItems: "center",
     marginBottom: SPACING.lg,
   },

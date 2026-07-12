@@ -60,6 +60,7 @@ export default function LocationSearchScreen() {
         <TextInput
           style={styles.searchInput}
           placeholder={type === "pickup" ? "Search current location..." : "Search where to go..."}
+          placeholderTextColor={theme.textSecondary}
           value={search}
           onChangeText={handleSearch}
           autoFocus
@@ -119,8 +120,10 @@ function createStyles(theme: CustomerTheme) {
     marginHorizontal: SPACING.lg,
     marginVertical: SPACING.md,
     paddingHorizontal: SPACING.md,
-    paddingVertical: SPACING.sm,
-    borderRadius: 12,
+    paddingVertical: SPACING.md,
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: theme.border,
   },
   searchIcon: {
     fontSize: 20,

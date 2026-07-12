@@ -281,9 +281,9 @@ const styles = StyleSheet.create({
     color: COLORS.text,
   },
   deliverySection: {
-    backgroundColor: COLORS.surface,
+    backgroundColor: COLORS.surfaceLight,
     padding: SPACING.md,
-    borderRadius: 12,
+    borderRadius: 16,
     marginBottom: SPACING.md,
   },
   deliveryLabel: {
@@ -355,9 +355,9 @@ const styles = StyleSheet.create({
     marginVertical: SPACING.xs,
   },
   distanceCard: {
-    backgroundColor: COLORS.surface,
+    backgroundColor: COLORS.surfaceLight,
     padding: SPACING.md,
-    borderRadius: 12,
+    borderRadius: 16,
     alignItems: "center",
     marginBottom: SPACING.md,
   },
@@ -376,12 +376,10 @@ const styles = StyleSheet.create({
     marginTop: 2,
   },
   noteSection: {
-    backgroundColor: COLORS.primaryLight,
+    backgroundColor: COLORS.primaryPale,
     padding: SPACING.md,
-    borderRadius: 12,
+    borderRadius: 16,
     marginBottom: SPACING.md,
-    borderLeftWidth: 4,
-    borderLeftColor: COLORS.primary,
   },
   noteLabel: {
     fontSize: 14,
@@ -413,18 +411,21 @@ const styles = StyleSheet.create({
   button: {
     flex: 1,
     paddingVertical: SPACING.md,
-    borderRadius: 12,
+    borderRadius: 16,
     alignItems: "center",
     justifyContent: "center",
-    minHeight: 50,
+    minHeight: 54,
   },
   declineButton: {
-    backgroundColor: COLORS.surface,
-    borderWidth: 2,
-    borderColor: COLORS.error,
+    backgroundColor: COLORS.errorSoft,
   },
   acceptButton: {
     backgroundColor: COLORS.primary,
+    shadowColor: COLORS.primary,
+    shadowOffset: { width: 0, height: 6 },
+    shadowOpacity: 0.3,
+    shadowRadius: 14,
+    elevation: 4,
   },
   declineText: {
     fontSize: 16,

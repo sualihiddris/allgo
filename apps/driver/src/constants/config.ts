@@ -52,6 +52,7 @@ export const COLORS = {
   inverseStrong: semanticColors.inverseStrong,
   warningSoft: semanticColors.warningSoft,
   successSoft: semanticColors.successSoft,
+  errorSoft: semanticColors.errorSoft,
   mapTint: semanticColors.mapTint,
 } as const;
 
