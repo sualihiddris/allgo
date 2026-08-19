@@ -237,7 +237,7 @@ export async function verifyOtp(
  */
 export async function refreshAccessToken(refreshToken: string): Promise<TokenPair> {
   // Verify token
-  const payload = verifyToken(refreshToken);
+  const payload = verifyToken(refreshToken, "refresh");
   if (!payload || payload.type !== "refresh") {
     throw createError("Invalid refresh token", 401, "INVALID_TOKEN");
   }

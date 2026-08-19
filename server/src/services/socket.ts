@@ -8,8 +8,8 @@ import { Server as HTTPServer } from "http";
 import { Server, Socket } from "socket.io";
 import { createAdapter } from "@socket.io/redis-adapter";
 import Redis from "ioredis";
-import { verify } from "jsonwebtoken";
 import { env } from "../config";
+import { verifyToken } from "../services/jwt";
 import {
   updateDriverLocation,
   findNearbyDrivers,
@@ -86,7 +86,20 @@ export async function setupSocketIO(httpServer: HTTPServer): Promise<Server> {
   }
 
   // Authentication middleware
-  io.use((socket: AuthenticatedSocket, next) => {
+  //
+  // Section 13/15/24: Socket.io must follow the SAME access-token standard
+  // as REST. This means:
+  //   1. require a token,
+  //   2. verify it as type ACCESS (not refresh, not totp_pending) via the
+  //      shared verifyToken service - not a raw jsonwebtoken verify that
+  //      would accept any signature type,
+  //   3. reload the current user from MySQL,
+  //   4. reject missing/inactive users,
+  //   5. use the CURRENT database role, never the (possibly stale) role
+  //      claim baked into the JWT.
+  // Driver.id is still resolved separately from User.id on connection
+  // (see driverRoomReady below).
+  io.use(async (socket: AuthenticatedSocket, next) => {
     const token = socket.handshake.auth.token;
 
     if (!token) {
@@ -94,9 +107,24 @@ export async function setupSocketIO(httpServer: HTTPServer): Promise<Server> {
     }
 
     try {
-      const decoded = verify(token, env.JWT_SECRET) as { sub: string; role: string };
-      socket.userId = decoded.sub;
-      socket.role = decoded.role;
+      const payload = verifyToken(token, "access");
+
+      if (!payload) {
+        return next(new Error("Invalid token"));
+      }
+
+      const user = await prisma.user.findUnique({
+        where: { id: payload.sub },
+        select: { id: true, role: true, isActive: true },
+      });
+
+      if (!user || !user.isActive) {
+        return next(new Error("User not found or inactive"));
+      }
+
+      socket.userId = user.id;
+      // Trust the CURRENT database role, not the JWT's role claim.
+      socket.role = user.role;
       next();
     } catch (error) {
       next(new Error("Invalid token"));

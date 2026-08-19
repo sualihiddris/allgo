@@ -25,19 +25,18 @@ export async function requireAuth(
 ): Promise<void> {
   try {
     const authHeader = req.headers.authorization;
-    
+
     if (!authHeader?.startsWith("Bearer ")) {
       throw createError("Missing authorization token", 401, "UNAUTHORIZED");
     }
 
     const token = authHeader.slice(7);
-    const payload = verifyToken(token);
+    const payload = verifyToken(token, "access");
 
-    if (!payload || payload.type !== "access") {
+    if (!payload) {
       throw createError("Invalid or expired token", 401, "INVALID_TOKEN");
     }
 
-    // Verify user still exists and is active
     const user = await prisma.user.findUnique({
       where: { id: payload.sub },
       select: { id: true, phone: true, role: true, isActive: true },
@@ -77,36 +76,53 @@ export function requireRole(...roles: string[]) {
 }
 
 /**
- * Optional auth - sets req.user if valid token provided
+ * Optional auth - sets req.user if a valid token is provided.
+ * On ANY failure (malformed/expired token, DB error, etc.) the request
+ * proceeds as anonymous. This must never block or crash the request.
  */
 export async function optionalAuth(
   req: Request,
   res: Response,
   next: NextFunction
 ): Promise<void> {
-  const authHeader = req.headers.authorization;
-  
-  if (!authHeader?.startsWith("Bearer ")) {
-    return next();
-  }
+  try {
+    const authHeader = req.headers.authorization;
 
-  const token = authHeader.slice(7);
-  const payload = verifyToken(token);
-
-  if (payload && payload.type === "access") {
-    const user = await prisma.user.findUnique({
-      where: { id: payload.sub },
-      select: { id: true, phone: true, role: true, isActive: true },
-    });
-
-    if (user && user.isActive) {
-      req.user = {
-        id: user.id,
-        phone: user.phone,
-        role: user.role,
-      };
+    if (!authHeader?.startsWith("Bearer ")) {
+      return next();
     }
-  }
 
-  next();
+    const token = authHeader.slice(7);
+
+    let payload: JwtPayload | null = null;
+    try {
+      payload = verifyToken(token, "access");
+    } catch {
+      return next();
+    }
+
+    if (payload) {
+      try {
+        const user = await prisma.user.findUnique({
+          where: { id: payload.sub },
+          select: { id: true, phone: true, role: true, isActive: true },
+        });
+
+        if (user && user.isActive) {
+          req.user = {
+            id: user.id,
+            phone: user.phone,
+            role: user.role,
+          };
+        }
+      } catch (dbError) {
+        console.error("optionalAuth: user lookup failed", dbError);
+      }
+    }
+
+    next();
+  } catch (error) {
+    console.error("optionalAuth: unexpected error", error);
+    next();
+  }
 }

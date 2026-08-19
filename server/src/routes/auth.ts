@@ -84,7 +84,7 @@ router.post(
     try {
       const { pendingToken, code, deviceId } = verify2faSchema.parse(req.body);
 
-      const payload = verifyToken(pendingToken);
+      const payload = verifyToken(pendingToken, "totp_pending");
       if (!payload || payload.type !== "totp_pending") {
         return res.status(401).json({
           success: false,
