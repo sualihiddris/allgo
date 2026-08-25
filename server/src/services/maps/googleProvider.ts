@@ -13,7 +13,7 @@ export class GoogleMapsProvider implements MapsProvider {
       key: env.GOOGLE_MAPS_API_KEY || "",
     });
     const response = await fetch(`${url}?${params}`);
-    const data = await response.json();
+    const data: any = await response.json();
     if (data.status !== "OK" || !data.routes?.length) {
       throw new Error(`Google Maps API error: ${data.status}`);
     }
@@ -34,7 +34,7 @@ export class GoogleMapsProvider implements MapsProvider {
       key: env.GOOGLE_MAPS_API_KEY || "",
     });
     const response = await fetch(`${url}?${params}`);
-    const data = await response.json();
+    const data: any = await response.json();
     if (data.status !== "OK" || !data.results?.length) {
       throw new Error(`Google Maps Geocoding error: ${data.status}`);
     }
@@ -46,7 +46,7 @@ export class GoogleMapsProvider implements MapsProvider {
     const url = `${this.baseUrl}/geocode/json`;
     const params = new URLSearchParams({ address, key: env.GOOGLE_MAPS_API_KEY || "" });
     const response = await fetch(`${url}?${params}`);
-    const data = await response.json();
+    const data: any = await response.json();
     if (data.status !== "OK" || !data.results?.length) {
       throw new Error(`Google Maps Geocoding error: ${data.status}`);
     }

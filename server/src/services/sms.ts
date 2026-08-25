@@ -32,7 +32,7 @@ export async function sendSms(phone: string, message: string): Promise<SmsRespon
       }),
     });
 
-    const data = await response.json();
+    const data: any = await response.json();
 
     if (data.status === "success") {
       return { success: true, messageId: data.data?.[0]?.id };
