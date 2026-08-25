@@ -7,3 +7,22 @@ yarn-error.log*
 .DS_Store
 *.local
 dist
+
+# Environment files
+.env
+.env.*
+!.env.example
+!**/.env.example
+
+# Credentials and private keys
+*.pem
+*.key
+*.p12
+*.pfx
+*.keystore
+serviceAccountKey.json
+
+# Generated output
+coverage
+build
+.next

@@ -3,10 +3,10 @@ import { colors, semanticColors, spacing, typography, radius } from "@allgo/shar
 // Use local IP in development so browser context can reach backend API
 // Fall back to localhost for production builds
 const getHost = () => {
-  if (typeof window !== "undefined" && window.location) {
-    return window.location.hostname;
+  if (typeof (globalThis as any).window !== "undefined" && (globalThis as any).window?.location) {
+    return (globalThis as any).window.location.hostname;
   }
-  return "172.20.10.3"; // Fallback to current Wi-Fi IP
+  return "localhost";
 };
 const host = getHost();
 export const API_BASE_URL = process.env.EXPO_PUBLIC_API_URL || `http://${host}:3000/api/v1`;
@@ -53,10 +53,11 @@ export const COLORS = {
   inverseStrong: semanticColors.inverseStrong,
   warningSoft: semanticColors.warningSoft,
   successSoft: semanticColors.successSoft,
+  errorSoft: semanticColors.errorSoft,
   mapTint: semanticColors.mapTint,
 } as const;
 
-export type CustomerTheme = typeof COLORS;
+export type CustomerTheme = Record<keyof typeof COLORS, string>;
 
 // Appearance mode dark palette - mirrors the driver app's night-mode
 // palette (apps/driver/src/constants/config.ts) for visual consistency
