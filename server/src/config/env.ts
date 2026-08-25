@@ -2,6 +2,12 @@ import { z } from "zod";
 
 const envSchema = z.object({
   NODE_ENV: z.enum(["development", "production", "test"]).default("development"),
+
+  ENABLE_DEV_LOGIN: z
+    .enum(["true", "false"])
+    .default("false")
+    .transform((value) => value === "true"),
+
   PORT: z.coerce.number().default(3000),
   
   // Database

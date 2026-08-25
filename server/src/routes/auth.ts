@@ -300,7 +300,9 @@ router.post(
               name: "Test Admin",
               role: "ADMIN",
               admin: {
-                create: {},
+                create: {
+                  role: "SUPER_ADMIN",
+                },
               },
             },
             include: { customer: true, driver: true, admin: true },
@@ -317,6 +319,8 @@ router.post(
                   licensePlate: "TEST-001",
                   isOnline: true,
                   isApproved: true,
+                  subscriptionStatus: "ACTIVE",
+                  subscriptionPeriodEnd: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000),
                 },
               },
             },
@@ -351,7 +355,7 @@ router.post(
           if (role === "ADMIN") {
             user = await prisma.user.update({
               where: { id: user.id },
-              data: { role: "ADMIN", admin: { create: {} } },
+              data: { role: "ADMIN", admin: { create: { role: "SUPER_ADMIN" } } },
               include: { customer: true, driver: true, admin: true },
             });
           } else if (role === "DRIVER") {
@@ -360,7 +364,14 @@ router.post(
               data: {
                 role: "DRIVER",
                 driver: {
-                  create: { vehicleType: "MOTO", licensePlate: "TEST-002", isOnline: true, isApproved: true },
+                  create: {
+                    vehicleType: "MOTO",
+                    licensePlate: "TEST-002",
+                    isOnline: true,
+                    isApproved: true,
+                    subscriptionStatus: "ACTIVE",
+                    subscriptionPeriodEnd: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000),
+                  },
                 },
               },
               include: { customer: true, driver: true, admin: true },
@@ -372,12 +383,40 @@ router.post(
               include: { customer: true, driver: true, admin: true },
             });
           }
-        } else if (user.role !== role) {
-          user = await prisma.user.update({
-            where: { id: user.id },
-            data: { role },
-            include: { customer: true, driver: true, admin: true },
-          });
+        } else {
+          const updateData: any = {};
+          if (user.role !== role) {
+            updateData.role = role;
+          }
+          if (role === "ADMIN" && user.admin && user.admin.role !== "SUPER_ADMIN") {
+            await prisma.admin.update({
+              where: { id: user.admin.id },
+              data: { role: "SUPER_ADMIN" },
+            });
+          }
+          if (role === "DRIVER" && user.driver && user.driver.subscriptionStatus !== "ACTIVE") {
+            await prisma.driver.update({
+              where: { id: user.driver.id },
+              data: {
+                subscriptionStatus: "ACTIVE",
+                subscriptionPeriodEnd: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000),
+                isApproved: true,
+              },
+            });
+          }
+          if (Object.keys(updateData).length > 0) {
+            user = await prisma.user.update({
+              where: { id: user.id },
+              data: updateData,
+              include: { customer: true, driver: true, admin: true },
+            });
+          } else {
+            // Re-fetch to get updated sub-records
+            user = await prisma.user.findUnique({
+              where: { id: user.id },
+              include: { customer: true, driver: true, admin: true },
+            });
+          }
         }
       }
 
