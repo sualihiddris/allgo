@@ -341,13 +341,25 @@ export async function findDriverWithExpansion(
  * Assign trip to driver
  */
 export async function assignTripToDriver(tripId: string, driverId: string) {
-  return prisma.trip.update({
-    where: { id: tripId },
+  const claim = await prisma.trip.updateMany({
+    where: {
+      id: tripId,
+      status: "REQUESTED",
+      driverId: null,
+    },
     data: {
       driverId,
       status: "ACCEPTED",
       acceptedAt: new Date(),
     },
+  });
+
+  if (claim.count === 0) {
+    throw new Error("Trip is no longer available for assignment");
+  }
+
+  return prisma.trip.findUniqueOrThrow({
+    where: { id: tripId },
     include: {
       customer: {
         include: {
