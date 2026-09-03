@@ -17,6 +17,7 @@ import { sendSms } from "../services/sms";
 import { generateTotpSecret, generateTotpQrCode, verifyTotpCode } from "../services/totp";
 import { logAdminAction } from "../services/auditLog";
 import { z } from "zod";
+import { mapsService } from "../services/maps";
 
 const router = Router();
 
@@ -545,137 +546,194 @@ router.get("/drivers/feedback", requireAuth, requireAdmin, async (req, res) => {
  * This is the main endpoint for dispatchers to create trips on behalf of callers
  */
 router.post("/trips/call-in", requireAuth, requireAdmin, async (req, res) => {
-  try {
-    const {
-      callerPhone,
-      callerName,
-      vehicleType,
-      serviceType,
-      deliveryType,
-      itemDescription,
-      pickup,
-      destination,
-      customerNote,
-    } = req.body;
+  const {
+    callerPhone,
+    callerName,
+    vehicleType,
+    serviceType,
+    deliveryType,
+    itemDescription,
+    pickup,
+    destination,
+    customerNote,
+  } = req.body;
 
-    // Validation
-    if (!callerPhone) {
-      return res.status(400).json({ error: "Caller phone number is required" });
-    }
-    if (!vehicleType || !["MOTO", "KEKE", "MOTOR_KING"].includes(vehicleType)) {
-      return res.status(400).json({ error: "Valid vehicle type is required" });
-    }
-    if (!pickup?.address || !destination?.address) {
-      return res.status(400).json({ error: "Pickup and destination addresses are required" });
-    }
+  // Validation
+  if (!callerPhone) {
+    return res.status(400).json({ error: "Caller phone number is required" });
+  }
+  if (!vehicleType || !["MOTO", "KEKE", "MOTOR_KING"].includes(vehicleType)) {
+    return res.status(400).json({ error: "Valid vehicle type is required" });
+  }
+  if (!pickup?.address || !destination?.address) {
+    return res.status(400).json({ error: "Pickup and destination addresses are required" });
+  }
 
-    // Check if call-in is available (7am-9pm only)
-    if (!isCallInHours()) {
-      return res.status(400).json({
-        error: "Call-in booking is available 7am-9pm only. For late-night rides, please use the AllGo app.",
-      });
-    }
-
-    // Check night restrictions for vehicle type
-    if (isNightServiceHours() && !isVehicleAllowedAtNight(vehicleType as VehicleType)) {
-      return res.status(400).json({
-        error: `${vehicleType} is not available during night hours. Only MOTO and KEKE are available.`,
-      });
-    }
-
-    // MOTO validation
-    if (vehicleType === "MOTO") {
-      if (!serviceType || !["PASSENGER", "DELIVERY"].includes(serviceType)) {
-        return res.status(400).json({ error: "MOTO requires service type (PASSENGER or DELIVERY)" });
-      }
-      if (serviceType === "DELIVERY") {
-        if (!deliveryType || !["FOOD", "GROCERIES", "PARCELS", "OTHER"].includes(deliveryType)) {
-          return res.status(400).json({ error: "Delivery type is required for MOTO deliveries" });
-        }
-        if (deliveryType === "OTHER" && !itemDescription) {
-          return res.status(400).json({ error: "Item description is required for OTHER delivery type" });
-        }
-      }
-    }
-
-    // Set default coordinates if not provided (landmark-based booking)
-    const pickupData = {
-      lat: pickup.lat || 0,
-      lng: pickup.lng || 0,
-      address: pickup.address,
-    };
-    const destData = {
-      lat: destination.lat || 0,
-      lng: destination.lng || 0,
-      address: destination.address,
-    };
-
-    // Create the trip with CALL source
-    const { trip } = await createTrip({
-      vehicleType: vehicleType as VehicleType,
-      serviceType: (serviceType as ServiceType) || "PASSENGER",
-      deliveryType: deliveryType as DeliveryType,
-      itemDescription,
-      pickup: pickupData,
-      destination: destData,
-      customerNote,
-      source: "CALL" as TripSource,
-      callerPhone,
-      callerName,
+  // Check if call-in is available (7am-9pm only)
+  if (!isCallInHours()) {
+    return res.status(400).json({
+      error: "Call-in booking is available 7am-9pm only. For late-night rides, please use the AllGo app.",
     });
+  }
 
-    // Start dispatch immediately
-    const dispatchResult = await findDriverWithExpansion(
+  // Check night restrictions for vehicle type
+  if (isNightServiceHours() && !isVehicleAllowedAtNight(vehicleType as VehicleType)) {
+    return res.status(400).json({
+      error: `${vehicleType} is not available during night hours. Only MOTO and KEKE are available.`,
+    });
+  }
+
+  // MOTO validation
+  if (vehicleType === "MOTO") {
+    if (!serviceType || !["PASSENGER", "DELIVERY"].includes(serviceType)) {
+      return res.status(400).json({ error: "MOTO requires service type (PASSENGER or DELIVERY)" });
+    }
+    if (serviceType === "DELIVERY") {
+      if (!deliveryType || !["FOOD", "GROCERIES", "PARCELS", "OTHER"].includes(deliveryType)) {
+        return res.status(400).json({ error: "Delivery type is required for MOTO deliveries" });
+      }
+      if (deliveryType === "OTHER" && !itemDescription) {
+        return res.status(400).json({ error: "Item description is required for OTHER delivery type" });
+      }
+    }
+  }
+
+  const hasValidCoordinates = (location: { lat?: unknown; lng?: unknown }) =>
+    typeof location.lat === "number" &&
+    Number.isFinite(location.lat) &&
+    typeof location.lng === "number" &&
+    Number.isFinite(location.lng);
+
+  let pickupData: { lat: number; lng: number; address: string };
+  try {
+    const pickupAddress = pickup.address.trim();
+    if (hasValidCoordinates(pickup)) {
+      pickupData = {
+        lat: pickup.lat,
+        lng: pickup.lng,
+        address: pickupAddress,
+      };
+    } else {
+      const geocodedPickup = await mapsService.geocode(pickupAddress);
+      pickupData = {
+        lat: geocodedPickup.location.lat,
+        lng: geocodedPickup.location.lng,
+        address: geocodedPickup.address || pickupAddress,
+      };
+    }
+  } catch (error) {
+    console.error("[Call-In] Failed to geocode pickup location:", error);
+    return res.status(400).json({
+      error: "Could not locate the pickup location. Please enter a more specific landmark or address.",
+    });
+  }
+
+  let destinationData: { lat: number; lng: number; address: string };
+  try {
+    const destinationAddress = destination.address.trim();
+    if (hasValidCoordinates(destination)) {
+      destinationData = {
+        lat: destination.lat,
+        lng: destination.lng,
+        address: destinationAddress,
+      };
+    } else {
+      const geocodedDestination = await mapsService.geocode(destinationAddress);
+      destinationData = {
+        lat: geocodedDestination.location.lat,
+        lng: geocodedDestination.location.lng,
+        address: geocodedDestination.address || destinationAddress,
+      };
+    }
+  } catch (error) {
+    console.error("[Call-In] Failed to geocode destination location:", error);
+    return res.status(400).json({
+      error: "Could not locate the destination. Please enter a more specific landmark or address.",
+    });
+  }
+
+  console.log("[Call-In] Locations resolved");
+
+  const tripInput = {
+    vehicleType: vehicleType as VehicleType,
+    serviceType: (serviceType as ServiceType) || "PASSENGER" as ServiceType,
+    pickup: pickupData,
+    destination: destinationData,
+    source: "CALL" as TripSource,
+    callerPhone: callerPhone.trim(),
+    ...(vehicleType === "MOTO" && serviceType === "DELIVERY"
+      ? {
+          deliveryType: deliveryType as DeliveryType,
+          itemDescription,
+        }
+      : {}),
+    ...(typeof callerName === "string" ? { callerName: callerName.trim() } : {}),
+    ...(typeof customerNote === "string" ? { customerNote: customerNote.trim() } : {}),
+  };
+
+  let trip;
+  try {
+    ({ trip } = await createTrip(tripInput));
+    console.log(`[Call-In] Trip ${trip.id} created successfully`);
+  } catch (error) {
+    console.error("[Call-In] Failed to create trip:", error);
+    return res.status(500).json({ error: "Trip could not be created. Please try again." });
+  }
+
+  let dispatchResult;
+  try {
+    dispatchResult = await findDriverWithExpansion(
       pickupData.lat,
       pickupData.lng,
       vehicleType as VehicleType
     );
-
     if (dispatchResult.success && dispatchResult.driver) {
-      // Found a driver - update trip
-      // Note: Real dispatch would send to driver and wait for acceptance
-      // For MVP, we immediately assign to nearest driver
-      console.log(`[Call-In] Trip ${trip.id} dispatching to driver ${dispatchResult.driver.driverId}`);
+      console.log(`[Call-In] Trip ${trip.id} found driver ${dispatchResult.driver.driverId}`);
+    } else {
+      console.log(`[Call-In] No driver available for trip ${trip.id}`);
     }
-
-    res.status(201).json({
-      success: true,
-      trip: {
-        id: trip.id,
-        status: trip.status,
-        source: trip.source,
-        callerPhone: trip.callerPhone,
-        callerName: trip.callerName,
-        vehicleType: trip.vehicleType,
-        serviceType: trip.serviceType,
-        deliveryType: trip.deliveryType,
-        pickup: {
-          lat: trip.pickupLat,
-          lng: trip.pickupLng,
-          address: trip.pickupAddress,
-        },
-        destination: {
-          lat: trip.destLat,
-          lng: trip.destLng,
-          address: trip.destAddress,
-        },
-        createdAt: trip.createdAt,
-      },
-      dispatch: dispatchResult.success
-        ? {
-            status: "SEARCHING",
-            nearestDriver: dispatchResult.driver,
-            message: dispatchResult.message,
-          }
-        : {
-            status: "NO_DRIVER_FOUND",
-            message: dispatchResult.message,
-          },
-    });
   } catch (error) {
-    console.error("Failed to create call-in trip:", error);
-    res.status(500).json({ error: "Failed to create trip" });
+    console.error(`[Call-In] Dispatch failed for trip ${trip.id}:`, error);
+    dispatchResult = {
+      success: false,
+      message: "Trip created successfully, but automatic driver dispatch failed.",
+    };
   }
+
+  return res.status(201).json({
+    success: true,
+    trip: {
+      id: trip.id,
+      status: trip.status,
+      source: trip.source,
+      callerPhone: trip.callerPhone,
+      callerName: trip.callerName,
+      vehicleType: trip.vehicleType,
+      serviceType: trip.serviceType,
+      deliveryType: trip.deliveryType,
+      pickup: {
+        lat: trip.pickupLat,
+        lng: trip.pickupLng,
+        address: trip.pickupAddress,
+      },
+      destination: {
+        lat: trip.destLat,
+        lng: trip.destLng,
+        address: trip.destAddress,
+      },
+      createdAt: trip.createdAt,
+    },
+    dispatch: dispatchResult.success
+      ? {
+          status: "SEARCHING",
+          nearestDriver: dispatchResult.driver,
+          message: dispatchResult.message,
+        }
+      : {
+          status: "NO_DRIVER_FOUND",
+          message: dispatchResult.message,
+        },
+  });
 });
 
 /**

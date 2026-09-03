@@ -89,10 +89,48 @@ export interface JobOffer {
 // Constants - now dynamic based on time of day
 const DRIVER_LOCATION_PREFIX = "driver:location:";
 const DRIVER_LOCATION_TTL = 300; // 5 minutes
+const DRIVER_LOCATION_MAX_AGE_MS = 5 * 60 * 1000;
 
 // Legacy exports for compatibility (use getSearchRadii() and getJobTimeout() instead)
 const SEARCH_RADII = DAY_SEARCH_RADII;
 export const JOB_TIMEOUT_SECONDS = DAY_JOB_TIMEOUT_SECONDS;
+
+function normalizeLocationTimestamp(value: unknown): number | null {
+  if (typeof value === "number") {
+    return Number.isFinite(value) ? value : null;
+  }
+
+  if (typeof value === "string" && value.trim()) {
+    const timestamp = Date.parse(value);
+    return Number.isNaN(timestamp) ? null : timestamp;
+  }
+
+  return null;
+}
+
+function normalizeDriverLocation(value: unknown): DriverLocation | null {
+  if (!value || typeof value !== "object") return null;
+
+  const location = value as { lat?: unknown; lng?: unknown; timestamp?: unknown };
+  const timestamp = normalizeLocationTimestamp(location.timestamp);
+
+  if (
+    typeof location.lat !== "number" ||
+    !Number.isFinite(location.lat) ||
+    typeof location.lng !== "number" ||
+    !Number.isFinite(location.lng) ||
+    timestamp === null ||
+    Date.now() - timestamp > DRIVER_LOCATION_MAX_AGE_MS
+  ) {
+    return null;
+  }
+
+  return {
+    lat: location.lat,
+    lng: location.lng,
+    timestamp,
+  };
+}
 
 /**
  * Update driver location in Redis
@@ -126,8 +164,13 @@ export async function getDriverLocation(driverId: string): Promise<DriverLocatio
   const cached = await redis.get(key);
 
   if (cached) {
-    const parsed = JSON.parse(cached);
-    return { lat: parsed.lat, lng: parsed.lng, timestamp: parsed.timestamp };
+    try {
+      const parsed = JSON.parse(cached);
+      return normalizeDriverLocation(parsed);
+    } catch (error) {
+      console.warn(`[Dispatch] Failed to parse cached location for driver ${driverId}:`, error);
+      return null;
+    }
   }
 
   // Fallback to database
@@ -137,8 +180,13 @@ export async function getDriverLocation(driverId: string): Promise<DriverLocatio
   });
 
   if (driver?.lastLocation) {
-    const loc = JSON.parse(driver.lastLocation as unknown as string) as { lat: number; lng: number };
-    return { lat: loc.lat, lng: loc.lng, timestamp: Date.now() };
+    try {
+      const parsed = JSON.parse(driver.lastLocation as string);
+      return normalizeDriverLocation(parsed);
+    } catch (error) {
+      console.warn(`[Dispatch] Failed to parse stored location for driver ${driverId}:`, error);
+      return null;
+    }
   }
 
   return null;
