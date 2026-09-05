@@ -1,4 +1,4 @@
-import { MapsProvider, GeoPoint, RouteResponse, GeocodeResponse } from "./types";
+import { MapsProvider, GeoPoint, RouteResponse, GeocodeResponse, PlaceSuggestion, PlaceDetails } from "./types";
 
 export class MockMapsProvider implements MapsProvider {
   async getRoute(origin: GeoPoint, destination: GeoPoint): Promise<RouteResponse> {
@@ -19,6 +19,18 @@ export class MockMapsProvider implements MapsProvider {
   }
   async geocode(address: string): Promise<GeocodeResponse> {
     return { location: { lat: 5.6037, lng: -0.1870 }, address };
+  }
+  async autocompletePlaces(input: string): Promise<PlaceSuggestion[]> {
+    const text = `${input.trim()}, Ghana`;
+    return input.trim().length >= 2 ? [{ placeId: `mock-${encodeURIComponent(input.trim())}`, text }] : [];
+  }
+  async getPlaceDetails(placeId: string): Promise<PlaceDetails> {
+    const text = decodeURIComponent(placeId.replace(/^mock-/, "")) || "Tarkwa";
+    return {
+      placeId,
+      address: `${text}, Ghana`,
+      location: { lat: 5.298625, lng: -2.001296 },
+    };
   }
   private calculateDistance(from: GeoPoint, to: GeoPoint): number {
     const R = 6371e3;

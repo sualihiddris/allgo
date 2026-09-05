@@ -31,7 +31,22 @@ class MapsService {
   async geocode(...args: Parameters<MapsProvider["geocode"]>) {
     return this.provider.geocode(...args);
   }
+
+  async autocompletePlaces(...args: Parameters<MapsProvider["autocompletePlaces"]>) {
+    return this.provider.autocompletePlaces(...args);
+  }
+
+  async getPlaceDetails(...args: Parameters<MapsProvider["getPlaceDetails"]>) {
+    return this.provider.getPlaceDetails(...args);
+  }
 }
 
 export const mapsService = new MapsService();
-export { MapsProvider, GeoPoint, RouteResponse, GeocodeResponse } from "./types";
+export {
+  MapsProvider,
+  GeoPoint,
+  RouteResponse,
+  GeocodeResponse,
+  PlaceSuggestion,
+  PlaceDetails,
+} from "./types";
