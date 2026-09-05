@@ -13,6 +13,7 @@ import { useDriverStore, useJobStore } from "../../store";
 import { COLORS, SPACING, getDriverTheme, DriverTheme } from "../../constants/config";
 import socketService from "../../services/socket";
 import locationService from "../../services/location";
+import tripService from "../../services/trip";
 import JobOfferModal from "../../components/JobOfferModal";
 
 import { isNightServiceHours } from "@allgo/shared/constants/nightService";
@@ -109,6 +110,41 @@ export default function HomeScreen() {
       router.push("/(main)/active-job");
     }
   }, [activeJob]);
+
+  useEffect(() => {
+    if (!user?.driver) return;
+
+    let cancelled = false;
+
+    tripService.getActiveTrips()
+      .then((trips) => {
+        if (cancelled || !trips.length || useJobStore.getState().activeJob) return;
+
+        const trip = trips[0];
+        clearOffer();
+        setActiveJob({
+          id: trip.id,
+          vehicleType: trip.vehicleType,
+          serviceType: trip.serviceType,
+          deliveryType: trip.deliveryType,
+          itemDescription: trip.itemDescription,
+          status: trip.status,
+          pickup: trip.pickup,
+          destination: trip.destination,
+          customer: trip.customer,
+          customerNote: trip.customerNote,
+        });
+      })
+      .catch((error) => {
+        if (!cancelled) {
+          console.error("Failed to recover active trip:", error);
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [user?.id, user?.driver]);
 
   const handleToggleOnline = async () => {
     const result = await toggleOnline();

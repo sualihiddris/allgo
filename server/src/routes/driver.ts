@@ -333,6 +333,8 @@ router.get(
           destAddress: true,
           customerNote: true,
           createdAt: true,
+          callerName: true,
+          callerPhone: true,
           customer: {
             select: {
               user: { select: { name: true, phone: true } },
@@ -352,8 +354,8 @@ router.get(
         destination: { lat: t.destLat, lng: t.destLng, address: t.destAddress },
         customerNote: t.customerNote,
         customer: {
-          name: t.customer?.user?.name ?? "Customer",
-          phone: t.customer?.user?.phone ?? "",
+          name: t.customer?.user?.name ?? t.callerName ?? "Customer",
+          phone: t.customer?.user?.phone ?? t.callerPhone ?? "",
         },
         createdAt: t.createdAt,
       }));
