@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import {
   Modal,
   View,
@@ -44,26 +44,43 @@ export default function JobOfferModal({ visible, onAccept, onDecline }: JobOffer
   // Section 20: Dynamic timeout - 45s for night, 30s for day
   const countdownDuration = isNightServiceHours() ? 45 : 30;
   const [countdown, setCountdown] = useState(countdownDuration);
+  const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const countdownRef = useRef(countdownDuration);
+  const autoDeclinedRef = useRef(false);
 
   useEffect(() => {
-    if (!visible) return;
+    if (!visible) {
+      return;
+    }
 
     const duration = isNightServiceHours() ? 45 : 30;
+    countdownRef.current = duration;
+    autoDeclinedRef.current = false;
     setCountdown(duration);
-    
-    const interval = setInterval(() => {
-      setCountdown((prev) => {
-        if (prev <= 1) {
-          clearInterval(interval);
-          onDecline(); // Auto-decline when time runs out
-          return 0;
-        }
-        return prev - 1;
-      });
+
+    intervalRef.current = setInterval(() => {
+      countdownRef.current = Math.max(0, countdownRef.current - 1);
+      setCountdown((prev) => Math.max(0, prev - 1));
     }, 1000);
 
-    return () => clearInterval(interval);
+    return () => {
+      if (intervalRef.current) {
+        clearInterval(intervalRef.current);
+        intervalRef.current = null;
+      }
+    };
   }, [visible]);
+
+  useEffect(() => {
+    if (visible && countdown === 0 && !autoDeclinedRef.current) {
+      autoDeclinedRef.current = true;
+      if (intervalRef.current) {
+        clearInterval(intervalRef.current);
+        intervalRef.current = null;
+      }
+      onDecline();
+    }
+  }, [countdown, visible, onDecline]);
 
   if (!currentOffer) return null;
 
