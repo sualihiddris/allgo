@@ -20,7 +20,7 @@ import {
   Animated,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
-import { useRouter } from "expo-router";
+import { Redirect, useRouter } from "expo-router";
 import { SPACING, CustomerTheme } from "../../constants/config";
 import { useTheme } from "../../hooks/useTheme";
 import { useBookingStore } from "../../store/bookingStore";
@@ -51,6 +51,10 @@ export default function TripTrackingScreen() {
   const searchTimerRef = useRef<NodeJS.Timeout | null>(null);
 
   useEffect(() => {
+    if (!currentTrip?.id) {
+      return;
+    }
+
     // Check if night mode (9pm - 5am) for 45s timeout
     const hour = new Date().getHours();
     const isNight = hour >= 21 || hour < 5;
@@ -65,7 +69,7 @@ export default function TripTrackingScreen() {
       }
       socketService.disconnect();
     };
-  }, []);
+  }, [currentTrip?.id]);
 
   useEffect(() => {
     // Pulse animation for searching state
@@ -80,11 +84,7 @@ export default function TripTrackingScreen() {
   }, [tripState]);
 
   const initializeTrip = async () => {
-    if (!currentTrip?.id) {
-      Alert.alert("Error", "No trip found");
-      router.replace("/home");
-      return;
-    }
+    if (!currentTrip?.id) return;
 
     try {
       // Connect to socket
@@ -222,6 +222,10 @@ export default function TripTrackingScreen() {
       Linking.openURL(phoneUrl);
     }
   };
+
+  if (!currentTrip?.id) {
+    return <Redirect href="/(main)/home" />;
+  }
 
   // Render based on trip state
   const renderContent = () => {
