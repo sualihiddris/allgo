@@ -42,6 +42,20 @@ interface AuthenticatedSocket extends Socket {
 
 let ioInstance: Server | null = null;
 
+export type DispatchTripResult =
+  | {
+      status: "ACCEPTED";
+      driver: {
+        id: string;
+        name: string | null;
+        phone: string;
+        vehicleType: VehicleType;
+        licensePlate: string | null;
+      };
+    }
+  | { status: "NO_DRIVERS"; message: string }
+  | { status: "FAILED"; reason: string };
+
 // REST routes (e.g. tracking.ts) need to push events to a customer's room
 // when a driver updates trip status outside of any socket event - there's
 // only ever one Socket.IO server per process in this MVP, so a module-level
@@ -204,139 +218,13 @@ export async function setupSocketIO(httpServer: HTTPServer): Promise<Server> {
      * current tier is exhausted. See AllGO_Master_Plan.md Section 3.
      */
     socket.on("trip:dispatch", async (tripId: string) => {
-      try {
-        const trip = await getTripById(tripId);
-
-        if (!trip || trip.status !== "REQUESTED") {
-          return socket.emit("trip:dispatch:failed", { tripId, reason: "Invalid trip" });
-        }
-
-        const isNight = isNightServiceHours();
-
-        if (isNight && !isVehicleAllowedAtNight(trip.vehicleType)) {
-          return socket.emit("trip:dispatch:no_drivers", {
-            tripId,
-            message: `${trip.vehicleType} service is not available during night hours (9pm-5am). Please try MOTO or KEKE.`,
-          });
-        }
-
-        const jobTimeoutSeconds = getJobTimeout();
-        const triedDriverIds = new Set<string>();
-
-        for (const radius of getSearchRadii()) {
-          const candidates = await findNearbyDrivers(
-            trip.pickupLat,
-            trip.pickupLng,
-            trip.vehicleType,
-            radius,
-            isNight
-          );
-
-          for (const candidate of candidates) {
-            if (triedDriverIds.has(candidate.driverId)) continue;
-            triedDriverIds.add(candidate.driverId);
-
-            const available = await isDriverAvailable(candidate.driverId);
-            if (!available) continue;
-
-            console.log(`[Dispatch] Trip ${tripId}: offering to driver ${candidate.driverId} (radius ${radius}m)`);
-
-            // Send job offer to driver - includes MOTO service type info
-            io.to(`driver:${candidate.driverId}`).emit("trip:offer", {
-              tripId: trip.id,
-              vehicleType: trip.vehicleType,
-              serviceType: trip.serviceType,
-              deliveryType: trip.deliveryType,
-              itemDescription: trip.itemDescription,
-              pickup: {
-                lat: trip.pickupLat,
-                lng: trip.pickupLng,
-                address: trip.pickupAddress,
-              },
-              destination: {
-                lat: trip.destLat,
-                lng: trip.destLng,
-                address: trip.destAddress,
-              },
-              distance: trip.distanceMeters,
-              customerName: trip.customer?.user?.name || "Customer",
-              customerPhone: trip.customer?.user?.phone || "",
-              customerNote: trip.customerNote,
-              timeoutSeconds: jobTimeoutSeconds,
-            });
-
-            // Wait for this driver's response before trying the next one.
-            // Called immediately after the offer emit, with no await in
-            // between, so the pendingResponses registry entry exists the
-            // instant the driver could possibly respond - any await here
-            // (e.g. a pushToken lookup) would open a real race where a
-            // fast accept/decline arrives before there's anything to
-            // resolve, and silently falls through to a full timeout.
-            const responsePromise = waitForDriverResponse(
-              candidate.driverId,
-              tripId,
-              jobTimeoutSeconds
-            );
-
-            // Fire-and-forget wake-up push, fully decoupled from the
-            // response wait above - unconditional, not gated on "no socket
-            // found", since the goal is to wake a backgrounded app before
-            // we know whether its socket is still alive (checking first
-            // would just reintroduce that race). Never awaited: a slow
-            // Expo API call (or the pushToken lookup itself) must not
-            // delay - or race - the response registry above.
-            prisma.driver
-              .findUnique({ where: { id: candidate.driverId }, select: { pushToken: true } })
-              .then((candidateDriver) => {
-                if (candidateDriver?.pushToken) {
-                  return sendPushNotification(
-                    candidateDriver.pushToken,
-                    "New ride request nearby!",
-                    "Open the app to view and respond.",
-                    { tripId: trip.id }
-                  );
-                }
-              })
-              .catch((error) => console.error("[Push] Failed to send job offer push:", error));
-
-            const response = await responsePromise;
-
-            console.log(`[Dispatch] Trip ${tripId}: driver ${candidate.driverId} responded "${response}"`);
-
-            if (response === "accept") {
-              const updatedTrip = await assignTripToDriver(tripId, candidate.driverId);
-
-              // Register trip for location tracking
-              await registerActiveTrip(candidate.driverId, tripId);
-
-              socket.emit("trip:accepted", {
-                tripId,
-                driver: {
-                  id: updatedTrip.driver!.id,
-                  name: updatedTrip.driver!.user.name,
-                  phone: updatedTrip.driver!.user.phone,
-                  vehicleType: updatedTrip.driver!.vehicleType,
-                  licensePlate: updatedTrip.driver!.licensePlate,
-                },
-              });
-
-              io.to(`driver:${candidate.driverId}`).emit("trip:confirmed", { tripId });
-              return;
-            }
-
-            // Declined or timed out — move on to the next-nearest driver
-          }
-        }
-
-        // All radius tiers exhausted with no acceptance
-        const nightMessage = isNight
-          ? "No night service drivers available right now. Please try again in a few minutes."
-          : "No drivers available nearby. Please try again in a few minutes.";
-
-        socket.emit("trip:dispatch:no_drivers", { tripId, message: nightMessage });
-      } catch (error) {
-        console.error("Error dispatching trip:", error);
-        socket.emit("trip:dispatch:failed", { tripId, reason: "Server error" });
+      const result = await dispatchTrip(tripId);
+      if (result.status === "ACCEPTED") {
+        socket.emit("trip:accepted", { tripId, driver: result.driver });
+      } else if (result.status === "NO_DRIVERS") {
+        socket.emit("trip:dispatch:no_drivers", { tripId, message: result.message });
+      } else {
+        socket.emit("trip:dispatch:failed", { tripId, reason: result.reason });
       }
     });
 
@@ -418,6 +306,112 @@ export async function setupSocketIO(httpServer: HTTPServer): Promise<Server> {
   });
 
   return io;
+}
+
+export async function dispatchTrip(tripId: string): Promise<DispatchTripResult> {
+  try {
+    const io = getIO();
+    const trip = await getTripById(tripId);
+
+    if (!trip || trip.status !== "REQUESTED") {
+      return { status: "FAILED", reason: "Invalid trip" };
+    }
+
+    const isNight = isNightServiceHours();
+    if (isNight && !isVehicleAllowedAtNight(trip.vehicleType)) {
+      return {
+        status: "NO_DRIVERS",
+        message: `${trip.vehicleType} service is not available during night hours (9pm-5am). Please try MOTO or KEKE.`,
+      };
+    }
+
+    const jobTimeoutSeconds = getJobTimeout();
+    const triedDriverIds = new Set<string>();
+
+    for (const radius of getSearchRadii()) {
+      const candidates = await findNearbyDrivers(
+        trip.pickupLat,
+        trip.pickupLng,
+        trip.vehicleType,
+        radius,
+        isNight
+      );
+
+      for (const candidate of candidates) {
+        if (triedDriverIds.has(candidate.driverId)) continue;
+        triedDriverIds.add(candidate.driverId);
+
+        const available = await isDriverAvailable(candidate.driverId);
+        if (!available) continue;
+
+        console.log(`[Dispatch] Trip ${tripId}: offering to driver ${candidate.driverId} (radius ${radius}m)`);
+        io.to(`driver:${candidate.driverId}`).emit("trip:offer", {
+          tripId: trip.id,
+          vehicleType: trip.vehicleType,
+          serviceType: trip.serviceType,
+          deliveryType: trip.deliveryType,
+          itemDescription: trip.itemDescription,
+          pickup: {
+            lat: trip.pickupLat,
+            lng: trip.pickupLng,
+            address: trip.pickupAddress,
+          },
+          destination: {
+            lat: trip.destLat,
+            lng: trip.destLng,
+            address: trip.destAddress,
+          },
+          distance: trip.distanceMeters,
+          customerName: trip.customer?.user?.name || trip.callerName || "Customer",
+          customerPhone: trip.customer?.user?.phone || trip.callerPhone || "",
+          customerNote: trip.customerNote,
+          timeoutSeconds: jobTimeoutSeconds,
+        });
+
+        const responsePromise = waitForDriverResponse(candidate.driverId, tripId, jobTimeoutSeconds);
+        prisma.driver
+          .findUnique({ where: { id: candidate.driverId }, select: { pushToken: true } })
+          .then((candidateDriver) => {
+            if (candidateDriver?.pushToken) {
+              return sendPushNotification(
+                candidateDriver.pushToken,
+                "New ride request nearby!",
+                "Open the app to view and respond.",
+                { tripId: trip.id }
+              );
+            }
+          })
+          .catch((error) => console.error("[Push] Failed to send job offer push:", error));
+
+        const response = await responsePromise;
+        console.log(`[Dispatch] Trip ${tripId}: driver ${candidate.driverId} responded "${response}"`);
+
+        if (response === "accept") {
+          const updatedTrip = await assignTripToDriver(tripId, candidate.driverId);
+          await registerActiveTrip(candidate.driverId, tripId);
+          io.to(`driver:${candidate.driverId}`).emit("trip:confirmed", { tripId });
+          return {
+            status: "ACCEPTED",
+            driver: {
+              id: updatedTrip.driver!.id,
+              name: updatedTrip.driver!.user.name,
+              phone: updatedTrip.driver!.user.phone,
+              vehicleType: updatedTrip.driver!.vehicleType,
+              licensePlate: updatedTrip.driver!.licensePlate,
+            },
+          };
+        }
+      }
+    }
+
+    const message = isNight
+      ? "No night service drivers available right now. Please try again in a few minutes."
+      : "No drivers available nearby. Please try again in a few minutes.";
+    return { status: "NO_DRIVERS", message };
+  } catch (error) {
+    console.error("Error dispatching trip:", error);
+    return { status: "FAILED", reason: "Server error" };
+  }
 }
 
 /**
