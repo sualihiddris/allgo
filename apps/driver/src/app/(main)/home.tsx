@@ -34,22 +34,73 @@ export default function HomeScreen() {
   } = useJobStore();
 
   useEffect(() => {
-    if (isOnline) {
-      // Location tracking must start only after the socket connects - starting
-      // it in parallel means the first (and on a near-stationary driver, maybe
-      // only) location update gets emitted before the socket is ready and is
-      // silently dropped, leaving the driver invisible to nearby-driver search.
-      connectSocket().then(() => {
-        locationService.startTracking();
-      });
-    } else {
-      socketService.disconnect();
-      locationService.stopTracking();
-    }
+    let cancelled = false;
+    let unsubscribeTripOffer: (() => void) | undefined;
+    let unsubscribeTripConfirmed: (() => void) | undefined;
+    let unsubscribeTripAcceptFailed: (() => void) | undefined;
+
+    const connectSocket = async () => {
+      if (!isOnline) return;
+
+      try {
+        // Location tracking must start only after the socket connects.
+        await socketService.connect();
+
+        if (cancelled) return;
+
+        unsubscribeTripOffer = socketService.onTripOffer((offer) => {
+          console.log("Received trip offer:", offer);
+          setCurrentOffer({
+            ...offer,
+            expiresAt: Date.now() + (offer.timeoutSeconds ?? 30) * 1000,
+          });
+        });
+
+        unsubscribeTripConfirmed = socketService.onTripConfirmed((data) => {
+          console.log("Trip confirmed:", data);
+          const offer = useJobStore.getState().currentOffer;
+          clearOffer();
+          setActiveJob({
+            id: data.tripId,
+            vehicleType: offer?.vehicleType || "MOTO",
+            serviceType: offer?.serviceType || "PASSENGER",
+            status: "ACCEPTED",
+            pickup: offer?.pickup || { lat: 0, lng: 0, address: "" },
+            destination: offer?.destination || { lat: 0, lng: 0, address: "" },
+            customer: {
+              name: offer?.customerName || "Customer",
+              phone: offer?.customerPhone || "",
+            },
+            customerNote: offer?.customerNote,
+          });
+        });
+
+        unsubscribeTripAcceptFailed = socketService.onTripAcceptFailed((data) => {
+          console.log("Accept failed:", data);
+          setIsAccepting(false);
+          clearOffer();
+          Alert.alert("Error", data.reason || "Failed to accept trip");
+        });
+
+        if (!cancelled) {
+          await locationService.startTracking();
+        }
+      } catch (error) {
+        if (!cancelled) {
+          console.error("Failed to connect socket:", error);
+        }
+      }
+    };
+
+    connectSocket();
 
     return () => {
-      socketService.disconnect();
+      cancelled = true;
+      unsubscribeTripOffer?.();
+      unsubscribeTripConfirmed?.();
+      unsubscribeTripAcceptFailed?.();
       locationService.stopTracking();
+      socketService.disconnect();
     };
   }, [isOnline]);
 
@@ -58,49 +109,6 @@ export default function HomeScreen() {
       router.push("/(main)/active-job");
     }
   }, [activeJob]);
-
-  const connectSocket = async () => {
-    try {
-      await socketService.connect();
-
-      // Listen for job offers
-      socketService.onTripOffer((offer) => {
-        console.log("Received trip offer:", offer);
-        setCurrentOffer({
-          ...offer,
-          expiresAt: Date.now() + (offer.timeoutSeconds ?? 30) * 1000,
-        });
-      });
-
-      // Listen for trip confirmation
-      socketService.onTripConfirmed((data) => {
-        console.log("Trip confirmed:", data);
-        clearOffer();
-        setActiveJob({
-          id: data.tripId,
-          vehicleType: currentOffer?.vehicleType || "MOTO",
-          serviceType: currentOffer?.serviceType || "PASSENGER",
-          status: "ACCEPTED",
-          pickup: currentOffer?.pickup || { lat: 0, lng: 0, address: "" },
-          destination: currentOffer?.destination || { lat: 0, lng: 0, address: "" },
-          customer: {
-            name: currentOffer?.customerName || "Customer",
-            phone: currentOffer?.customerPhone || "",
-          },
-          customerNote: currentOffer?.customerNote,
-        });
-      });
-
-      socketService.onTripAcceptFailed((data) => {
-        console.log("Accept failed:", data);
-        setIsAccepting(false);
-        clearOffer();
-        Alert.alert("Error", data.reason || "Failed to accept trip");
-      });
-    } catch (error) {
-      console.error("Failed to connect socket:", error);
-    }
-  };
 
   const handleToggleOnline = async () => {
     const result = await toggleOnline();

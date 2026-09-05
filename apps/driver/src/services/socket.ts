@@ -4,6 +4,8 @@ import { driverAuthService } from "./auth";
 
 class SocketService {
   private socket: Socket | null = null;
+  private pendingConnection: Promise<Socket> | null = null;
+  private pendingConnectionReject: ((error: Error) => void) | null = null;
   private reconnectAttempts = 0;
   private maxReconnectAttempts = 5;
 
@@ -11,6 +13,10 @@ class SocketService {
     if (this.socket?.connected) {
       console.log("Socket already connected");
       return this.socket;
+    }
+
+    if (this.pendingConnection) {
+      return this.pendingConnection;
     }
 
     const token = driverAuthService.getAccessToken();
@@ -22,7 +28,7 @@ class SocketService {
     // Convert http://localhost:3000 to ws://localhost:3000
     const socketUrl = SOCKET_URL.replace(/^http/, "ws");
 
-    this.socket = io(socketUrl, {
+    const socket = io(socketUrl, {
       auth: { token },
       transports: ["websocket"],
       reconnection: true,
@@ -31,30 +37,47 @@ class SocketService {
       reconnectionAttempts: this.maxReconnectAttempts,
     });
 
-    this.setupListeners();
+    this.socket = socket;
+    this.setupListeners(socket);
 
     // Wait for the handshake to actually complete - callers that emit
     // immediately after connect() (e.g. sending location) would otherwise
     // race the connection and silently fail.
-    return new Promise((resolve, reject) => {
-      this.socket!.once("connect", () => resolve(this.socket!));
-      this.socket!.once("connect_error", (error) => reject(error));
+    const connection = new Promise<Socket>((resolve, reject) => {
+      this.pendingConnectionReject = (error) => reject(error);
+      socket.once("connect", () => resolve(socket));
+      socket.once("connect_error", (error) => reject(error));
     });
+
+    this.pendingConnection = connection;
+
+    connection.catch(() => {
+      if (this.socket === socket) {
+        socket.disconnect();
+        this.socket = null;
+      }
+    }).finally(() => {
+      if (this.pendingConnection === connection) {
+        this.pendingConnection = null;
+        this.pendingConnectionReject = null;
+      }
+    });
+
+    return connection;
   }
 
-  private setupListeners() {
-    if (!this.socket) return;
+  private setupListeners(socket: Socket) {
 
-    this.socket.on("connect", () => {
-      console.log("✅ Socket connected:", this.socket?.id);
+    socket.on("connect", () => {
+      console.log("✅ Socket connected:", socket.id);
       this.reconnectAttempts = 0;
     });
 
-    this.socket.on("disconnect", (reason) => {
+    socket.on("disconnect", (reason) => {
       console.log("❌ Socket disconnected:", reason);
     });
 
-    this.socket.on("connect_error", (error) => {
+    socket.on("connect_error", (error) => {
       console.error("Socket connection error:", error.message);
       this.reconnectAttempts++;
       
@@ -65,10 +88,17 @@ class SocketService {
   }
 
   disconnect() {
+    if (this.pendingConnectionReject) {
+      this.pendingConnectionReject(new Error("Socket disconnected"));
+    }
+
     if (this.socket) {
       this.socket.disconnect();
       this.socket = null;
     }
+
+    this.pendingConnection = null;
+    this.pendingConnectionReject = null;
   }
 
   emit(event: string, data?: any) {
@@ -105,16 +135,19 @@ class SocketService {
     this.emit("trip:decline", tripId);
   }
 
-  onTripOffer(callback: (offer: any) => void) {
+  onTripOffer(callback: (offer: any) => void): () => void {
     this.on("trip:offer", callback);
+    return () => this.off("trip:offer", callback);
   }
 
-  onTripConfirmed(callback: (data: any) => void) {
+  onTripConfirmed(callback: (data: any) => void): () => void {
     this.on("trip:confirmed", callback);
+    return () => this.off("trip:confirmed", callback);
   }
 
-  onTripAcceptFailed(callback: (data: any) => void) {
+  onTripAcceptFailed(callback: (data: any) => void): () => void {
     this.on("trip:accept:failed", callback);
+    return () => this.off("trip:accept:failed", callback);
   }
 }
 

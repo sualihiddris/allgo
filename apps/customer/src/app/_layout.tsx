@@ -28,18 +28,14 @@ const queryClient = new QueryClient({
 });
 
 function RootLayout() {
-  const { initialize, isInitialized } = useAuthStore();
-  const { initialize: initializeTheme, isInitialized: isThemeInitialized } = useThemeStore();
+  const { initialize } = useAuthStore();
+  const { initialize: initializeTheme } = useThemeStore();
   const isDark = useIsDarkMode();
 
   useEffect(() => {
     initialize();
     initializeTheme();
   }, []);
-
-  if (!isInitialized || !isThemeInitialized) {
-    return null; // Or a splash screen
-  }
 
   return (
     <QueryClientProvider client={queryClient}>

@@ -22,10 +22,35 @@ export interface LocationData {
 
 class LocationService {
   private watchId: Location.LocationSubscription | null = null;
+  private testLocationHeartbeat: ReturnType<typeof setInterval> | null = null;
   private isTracking = false;
   private lastSentLocation: LocationData | null = null;
   private updateInterval = 5000; // Send updates every 5 seconds
   private minDistanceMeters = 10; // Only send if moved > 10 meters
+
+  private getDevelopmentTestLocation(): LocationData | null {
+    if (!__DEV__ || Platform.OS !== "web") return null;
+
+    const latValue = process.env.EXPO_PUBLIC_DRIVER_TEST_LAT?.trim();
+    const lngValue = process.env.EXPO_PUBLIC_DRIVER_TEST_LNG?.trim();
+    if (!latValue || !lngValue) return null;
+
+    const lat = Number(latValue);
+    const lng = Number(lngValue);
+
+    if (
+      !Number.isFinite(lat) ||
+      !Number.isFinite(lng) ||
+      lat < -90 ||
+      lat > 90 ||
+      lng < -180 ||
+      lng > 180
+    ) {
+      return null;
+    }
+
+    return { lat, lng, timestamp: Date.now() };
+  }
 
   /**
    * Request location permissions
@@ -58,6 +83,12 @@ class LocationService {
    * Get current location
    */
   async getCurrentLocation(): Promise<LocationData | null> {
+    const testLocation = this.getDevelopmentTestLocation();
+    if (testLocation) {
+      console.log("Development web test-location mode active");
+      return testLocation;
+    }
+
     try {
       const hasPermission = await this.requestPermissions();
       if (!hasPermission) return null;
@@ -86,6 +117,21 @@ class LocationService {
   async startTracking(): Promise<boolean> {
     if (this.isTracking) {
       console.log("Already tracking location");
+      return true;
+    }
+
+    const testLocation = this.getDevelopmentTestLocation();
+    if (testLocation) {
+      console.log("Development web test-location mode active");
+      this.isTracking = true;
+      this.sendLocationUpdate(testLocation);
+      this.testLocationHeartbeat = setInterval(() => {
+        this.sendLocationUpdate({
+          ...testLocation,
+          timestamp: Date.now(),
+        });
+      }, 30000);
+      console.log("✅ Location tracking started");
       return true;
     }
 
@@ -126,6 +172,11 @@ class LocationService {
    * Stop watching location
    */
   stopTracking(): void {
+    if (this.testLocationHeartbeat) {
+      clearInterval(this.testLocationHeartbeat);
+      this.testLocationHeartbeat = null;
+    }
+
     if (this.watchId) {
       this.watchId.remove();
       this.watchId = null;
