@@ -19,8 +19,21 @@ export interface GeocodeResponse {
   placeId?: string;
 }
 
+export interface PlaceSuggestion {
+  placeId: string;
+  text: string;
+}
+
+export interface PlaceDetails {
+  placeId: string;
+  address: string;
+  location: GeoPoint;
+}
+
 export interface MapsProvider {
   getRoute(origin: GeoPoint, destination: GeoPoint): Promise<RouteResponse>;
   reverseGeocode(location: GeoPoint): Promise<GeocodeResponse>;
   geocode(address: string): Promise<GeocodeResponse>;
+  autocompletePlaces(input: string, bias?: GeoPoint): Promise<PlaceSuggestion[]>;
+  getPlaceDetails(placeId: string): Promise<PlaceDetails>;
 }

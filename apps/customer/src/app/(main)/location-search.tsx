@@ -1,47 +1,83 @@
-import { useState } from "react";
-import { View, Text, StyleSheet, TextInput, TouchableOpacity, FlatList } from "react-native";
+import { useEffect, useRef, useState } from "react";
+import { View, Text, StyleSheet, TextInput, TouchableOpacity, FlatList, ActivityIndicator } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { useRouter, useLocalSearchParams } from "expo-router";
 import { SPACING, CustomerTheme } from "../../constants/config";
-import { useTheme } from "../../hooks/useTheme";
+import { useIsDarkMode, useTheme } from "../../hooks/useTheme";
 import { useBookingStore } from "../../store/bookingStore";
-
-// Mock location suggestions (in production, use Google Places API)
-const MOCK_LOCATIONS = [
-  { id: "1", address: "Accra Mall, Spintex Road", lat: 5.6037, lng: -0.1870 },
-  { id: "2", address: "Kotoka International Airport", lat: 5.6052, lng: -0.1718 },
-  { id: "3", address: "Osu Oxford Street", lat: 5.5560, lng: -0.1781 },
-  { id: "4", address: "Legon University Campus", lat: 5.6511, lng: -0.1876 },
-  { id: "5", address: "Tema Harbour", lat: 5.6667, lng: -0.0167 },
-];
+import { resolvePlace, searchPlaces, PlaceSuggestion } from "../../services/location";
 
 export default function LocationSearchScreen() {
   const router = useRouter();
   const theme = useTheme();
+  const isDark = useIsDarkMode();
   const styles = createStyles(theme);
   const params = useLocalSearchParams<{ type: "pickup" | "destination" }>();
   const { type } = params;
 
-  const { setPickup, setDestination } = useBookingStore();
+  const { pickup, setPickup, setDestination } = useBookingStore();
   const [search, setSearch] = useState("");
-  const [suggestions, setSuggestions] = useState(MOCK_LOCATIONS);
+  const [suggestions, setSuggestions] = useState<PlaceSuggestion[]>([]);
+  const [isSearching, setIsSearching] = useState(false);
+  const [hasSearched, setHasSearched] = useState(false);
+  const [resolutionError, setResolutionError] = useState<string | null>(null);
+  const [resolvingPlaceId, setResolvingPlaceId] = useState<string | null>(null);
+  const requestSequence = useRef(0);
 
-  const handleSearch = (text: string) => {
+  const handleSearchChange = (text: string) => {
     setSearch(text);
-    // In production, call Google Places API
-    const filtered = MOCK_LOCATIONS.filter((loc) =>
-      loc.address.toLowerCase().includes(text.toLowerCase())
-    );
-    setSuggestions(filtered);
+    setResolutionError(null);
   };
 
-  const handleSelectLocation = (location: typeof MOCK_LOCATIONS[0]) => {
-    if (type === "pickup") {
-      setPickup({ lat: location.lat, lng: location.lng, address: location.address });
-    } else {
-      setDestination({ lat: location.lat, lng: location.lng, address: location.address });
+  useEffect(() => {
+    const query = search.trim();
+    const sequence = ++requestSequence.current;
+    if (query.length < 2) {
+      setSuggestions([]);
+      setIsSearching(false);
+      setHasSearched(false);
+      return;
     }
-    router.back();
+    setSuggestions([]);
+    setHasSearched(false);
+    const timer = setTimeout(async () => {
+      setIsSearching(true);
+      try {
+        const results = await searchPlaces(query, pickup ?? undefined);
+        if (sequence === requestSequence.current) setSuggestions(results);
+      } catch (error) {
+        if (sequence === requestSequence.current) {
+          console.error("Failed to search places:", error);
+          setSuggestions([]);
+        }
+      } finally {
+        if (sequence === requestSequence.current) {
+          setIsSearching(false);
+          setHasSearched(true);
+        }
+      }
+    }, 350);
+    return () => clearTimeout(timer);
+  }, [search, pickup]);
+
+  const handleSelectLocation = async (suggestion: PlaceSuggestion) => {
+    if (resolvingPlaceId) return;
+    setResolutionError(null);
+    setResolvingPlaceId(suggestion.placeId);
+    try {
+      const place = await resolvePlace(suggestion.placeId);
+      if (type === "pickup") {
+        setPickup({ lat: place.lat, lng: place.lng, address: place.address });
+      } else {
+        setDestination({ lat: place.lat, lng: place.lng, address: place.address });
+      }
+      router.back();
+    } catch (error) {
+      console.error("Failed to resolve place:", error);
+      setResolutionError("Could not load that place. Please try again.");
+    } finally {
+      setResolvingPlaceId(null);
+    }
   };
 
   return (
@@ -62,25 +98,37 @@ export default function LocationSearchScreen() {
           placeholder={type === "pickup" ? "Search current location..." : "Search where to go..."}
           placeholderTextColor={theme.textSecondary}
           value={search}
-          onChangeText={handleSearch}
+          onChangeText={handleSearchChange}
           autoFocus
         />
       </View>
 
+      {isSearching && <ActivityIndicator color={theme.primary} style={styles.loading} />}
+      {!isSearching && hasSearched && suggestions.length === 0 && (
+        <Text style={styles.emptyState}>No places found</Text>
+      )}
+      {resolutionError && <Text style={styles.errorState}>{resolutionError}</Text>}
       <FlatList
         data={suggestions}
-        keyExtractor={(item) => item.id}
+        keyExtractor={(item) => item.placeId}
         renderItem={({ item }) => (
           <TouchableOpacity
             style={styles.suggestion}
             onPress={() => handleSelectLocation(item)}
           >
             <Text style={styles.suggestionIcon}>📍</Text>
-            <Text style={styles.suggestionText}>{item.address}</Text>
+            <Text style={styles.suggestionText}>{item.text}</Text>
             <Text style={styles.chevron}>›</Text>
           </TouchableOpacity>
         )}
         ItemSeparatorComponent={() => <View style={styles.separator} />}
+        ListFooterComponent={
+          suggestions.length > 0 ? (
+            <Text style={[styles.attribution, { color: isDark ? "#FFFFFF" : "#5E5E5E" }]}>
+              Google Maps
+            </Text>
+          ) : null
+        }
       />
     </SafeAreaView>
   );
@@ -157,6 +205,26 @@ function createStyles(theme: CustomerTheme) {
     height: 1,
     backgroundColor: theme.border,
     marginHorizontal: SPACING.lg,
+  },
+  loading: {
+    marginVertical: SPACING.md,
+  },
+  emptyState: {
+    textAlign: "center",
+    color: theme.textSecondary,
+    padding: SPACING.lg,
+  },
+  attribution: {
+    textAlign: "center",
+    fontSize: 12,
+    fontWeight: "normal",
+    padding: SPACING.sm,
+  },
+  errorState: {
+    textAlign: "center",
+    color: theme.error,
+    paddingHorizontal: SPACING.lg,
+    paddingBottom: SPACING.sm,
   },
 });
 }
