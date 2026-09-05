@@ -10,7 +10,8 @@ import { requireAuth } from "../middleware/auth";
 import { requireAdmin, requireSuperAdmin, branchReadScope, resolveBranchFilter, assertBranchWriteAccess } from "../middleware/branchScope";
 import { prisma } from "../config/database";
 import { createTrip } from "../services/trip";
-import { findDriverWithExpansion, assignTripToDriver, isNightServiceHours } from "../services/dispatch";
+import { findDriverWithExpansion, isNightServiceHours } from "../services/dispatch";
+import { dispatchTrip } from "../services/socket";
 import { isCallInHours, isVehicleAllowedAtNight } from "@allgo/shared/constants/nightService";
 import { VehicleType, ServiceType, DeliveryType, TripSource } from "@prisma/client";
 import { sendSms } from "../services/sms";
@@ -689,6 +690,20 @@ router.post("/trips/call-in", requireAuth, requireAdmin, async (req, res) => {
     );
     if (dispatchResult.success && dispatchResult.driver) {
       console.log(`[Call-In] Trip ${trip.id} found driver ${dispatchResult.driver.driverId}`);
+      void dispatchTrip(trip.id)
+        .then((result) => {
+          if (result.status === "ACCEPTED") {
+            console.log(`[Call-In] Trip ${trip.id} accepted by driver ${result.driver.id}`);
+          } else if (result.status === "NO_DRIVERS") {
+            console.log(`[Call-In] Real dispatch exhausted for trip ${trip.id}`);
+          } else {
+            console.error(`[Call-In] Real dispatch failed for trip ${trip.id}: ${result.reason}`);
+          }
+        })
+        .catch((error) => {
+          console.error(`[Call-In] Real dispatch failed for trip ${trip.id}:`, error);
+        });
+      console.log(`[Call-In] Real dispatch started for trip ${trip.id}`);
     } else {
       console.log(`[Call-In] No driver available for trip ${trip.id}`);
     }
