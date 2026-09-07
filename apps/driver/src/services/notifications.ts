@@ -11,6 +11,7 @@ import * as Notifications from "expo-notifications";
 import * as Device from "expo-device";
 import Constants from "expo-constants";
 import AsyncStorage from "@react-native-async-storage/async-storage";
+import { Platform } from "react-native";
 import { driverApiService } from "./driver";
 
 const LAST_REGISTERED_TOKEN_KEY = "driver_push_token_registered";
@@ -42,8 +43,13 @@ class NotificationService {
    */
   async registerPushToken(): Promise<void> {
     try {
+      if (Platform.OS === "web") {
+        console.log("Expo push notifications are not supported on web - skipping registration");
+        return;
+      }
+
       if (!Device.isDevice) {
-        console.warn("Push notifications require a physical device - skipping in simulator/web");
+        console.warn("Push notifications require a physical device - skipping simulator/emulator");
         return;
       }
 
