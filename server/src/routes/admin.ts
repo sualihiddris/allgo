@@ -10,7 +10,7 @@ import { requireAuth } from "../middleware/auth";
 import { requireAdmin, requireSuperAdmin, branchReadScope, resolveBranchFilter, assertBranchWriteAccess } from "../middleware/branchScope";
 import { prisma } from "../config/database";
 import { createTrip } from "../services/trip";
-import { findDriverWithExpansion, isNightServiceHours } from "../services/dispatch";
+import { findDriverWithExpansion, getDriverLocation, isNightServiceHours } from "../services/dispatch";
 import { dispatchTrip } from "../services/socket";
 import { isCallInHours, isVehicleAllowedAtNight } from "@allgo/shared/constants/nightService";
 import { VehicleType, ServiceType, DeliveryType, TripSource } from "@prisma/client";
@@ -61,17 +61,19 @@ router.get("/drivers", requireAuth, requireAdmin, async (req, res) => {
       },
     });
 
-    const driversWithStatus = drivers.map((driver) => ({
-      id: driver.userId,
-      branchId: driver.branchId,
-      name: driver.user.name || "Unknown",
-      phone: driver.user.phone,
-      vehicleType: driver.vehicleType,
-      vehiclePlate: driver.licensePlate || "N/A",
-      isApproved: driver.isApproved,
-      isOnline: driver.isOnline,
-      createdAt: driver.user.createdAt,
-    }));
+    const driversWithStatus = await Promise.all(
+      drivers.map(async (driver) => ({
+        id: driver.userId,
+        branchId: driver.branchId,
+        name: driver.user.name || "Unknown",
+        phone: driver.user.phone,
+        vehicleType: driver.vehicleType,
+        vehiclePlate: driver.licensePlate || "N/A",
+        isApproved: driver.isApproved,
+        isOnline: driver.isOnline ? Boolean(await getDriverLocation(driver.id)) : false,
+        createdAt: driver.user.createdAt,
+      }))
+    );
 
     res.json({ drivers: driversWithStatus });
   } catch (error) {
@@ -412,8 +414,7 @@ router.get("/stats", requireAuth, requireAdmin, async (req, res) => {
     const [
       totalDrivers,
       approvedDrivers,
-      onlineDrivers,
-      nightModeDrivers,
+      onlineIntentDrivers,
       totalCustomers,
       activeTrips,
       completedToday,
@@ -423,8 +424,10 @@ router.get("/stats", requireAuth, requireAdmin, async (req, res) => {
     ] = await Promise.all([
       prisma.driver.count({ where: driverWhere }),
       prisma.driver.count({ where: { ...driverWhere, isApproved: true } }),
-      prisma.driver.count({ where: { ...driverWhere, isOnline: true } }),
-      prisma.driver.count({ where: { ...driverWhere, nightMode: true, isOnline: true } }),
+      prisma.driver.findMany({
+        where: { ...driverWhere, isOnline: true },
+        select: { id: true, nightMode: true },
+      }),
       branchId
         ? prisma.customer.count({ where: { trips: { some: tripBranchWhere } } })
         : prisma.customer.count(),
@@ -450,6 +453,16 @@ router.get("/stats", requireAuth, requireAdmin, async (req, res) => {
       prisma.trip.count({ where: { ...tripBranchWhere, source: "APP" } }),
       prisma.trip.count({ where: { ...tripBranchWhere, source: "CALL" } }),
     ]);
+    const effectiveOnlineDrivers = await Promise.all(
+      onlineIntentDrivers.map(async (driver) => ({
+        ...driver,
+        isPresent: Boolean(await getDriverLocation(driver.id)),
+      }))
+    );
+    const onlineDrivers = effectiveOnlineDrivers.filter((driver) => driver.isPresent).length;
+    const nightModeDrivers = effectiveOnlineDrivers.filter(
+      (driver) => driver.isPresent && driver.nightMode
+    ).length;
 
     res.json({
       drivers: {
