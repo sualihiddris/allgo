@@ -22,6 +22,22 @@ import { mapsService } from "../services/maps";
 
 const router = Router();
 
+const isUsableCallInGeocode = (location: { lat?: unknown; lng?: unknown }, address: unknown) => {
+  if (
+    typeof location.lat !== "number" ||
+    !Number.isFinite(location.lat) ||
+    typeof location.lng !== "number" ||
+    !Number.isFinite(location.lng) ||
+    typeof address !== "string" ||
+    !address.trim()
+  ) {
+    return false;
+  }
+
+  const normalizedAddress = address.trim().toLowerCase().replace(/[.,!?;:]+$/g, "").trim();
+  return normalizedAddress !== "ghana";
+};
+
 /**
  * GET /api/v1/admin/drivers
  * Get all drivers with approval status
@@ -616,10 +632,15 @@ router.post("/trips/call-in", requireAuth, requireAdmin, async (req, res) => {
       };
     } else {
       const geocodedPickup = await mapsService.geocode(pickupAddress);
+      if (!isUsableCallInGeocode(geocodedPickup.location, geocodedPickup.address)) {
+        return res.status(400).json({
+          error: "Could not locate the pickup location. Please enter a more specific landmark or address.",
+        });
+      }
       pickupData = {
         lat: geocodedPickup.location.lat,
         lng: geocodedPickup.location.lng,
-        address: geocodedPickup.address || pickupAddress,
+        address: geocodedPickup.address.trim(),
       };
     }
   } catch (error) {
@@ -640,10 +661,15 @@ router.post("/trips/call-in", requireAuth, requireAdmin, async (req, res) => {
       };
     } else {
       const geocodedDestination = await mapsService.geocode(destinationAddress);
+      if (!isUsableCallInGeocode(geocodedDestination.location, geocodedDestination.address)) {
+        return res.status(400).json({
+          error: "Could not locate the destination. Please enter a more specific landmark or address.",
+        });
+      }
       destinationData = {
         lat: geocodedDestination.location.lat,
         lng: geocodedDestination.location.lng,
-        address: geocodedDestination.address || destinationAddress,
+        address: geocodedDestination.address.trim(),
       };
     }
   } catch (error) {
