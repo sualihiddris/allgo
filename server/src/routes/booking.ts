@@ -194,4 +194,82 @@ router.get(
   }
 );
 
+/**
+ * GET /bookings/trips/active
+ * Recover the newest active trip for the authenticated customer.
+ */
+router.get(
+  "/trips/active",
+  requireAuth,
+  async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      const customer = await prisma.customer.findUnique({
+        where: { userId: req.user!.id },
+      });
+
+      if (!customer) {
+        return sendSuccess(res, { trip: null });
+      }
+
+      const trip = await prisma.trip.findFirst({
+        where: {
+          customerId: customer.id,
+          status: { in: ["REQUESTED", "ACCEPTED", "ACTIVE"] },
+        },
+        orderBy: { createdAt: "desc" },
+        select: {
+          id: true,
+          status: true,
+          serviceType: true,
+          deliveryType: true,
+          itemDescription: true,
+          vehicleType: true,
+          pickupLat: true,
+          pickupLng: true,
+          pickupAddress: true,
+          destLat: true,
+          destLng: true,
+          destAddress: true,
+          customerNote: true,
+          driver: {
+            select: {
+              id: true,
+              licensePlate: true,
+              user: { select: { name: true, phone: true } },
+            },
+          },
+        },
+      });
+
+      return sendSuccess(res, {
+        trip: trip
+          ? {
+              id: trip.id,
+              status: trip.status,
+              serviceType: trip.serviceType,
+              deliveryType: trip.deliveryType,
+              itemDescription: trip.itemDescription,
+              vehicleType: trip.vehicleType,
+              pickup: { lat: trip.pickupLat, lng: trip.pickupLng, address: trip.pickupAddress },
+              destination: { lat: trip.destLat, lng: trip.destLng, address: trip.destAddress },
+              customerNote: trip.customerNote,
+              ...(trip.driver
+                ? {
+                    driver: {
+                      id: trip.driver.id,
+                      name: trip.driver.user.name,
+                      phone: trip.driver.user.phone,
+                      vehiclePlate: trip.driver.licensePlate,
+                    },
+                  }
+                : {}),
+            }
+          : null,
+      });
+    } catch (error) {
+      next(error);
+    }
+  }
+);
+
 export const bookingRouter = router;

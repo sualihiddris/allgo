@@ -32,6 +32,24 @@ interface TripHistoryItem {
   } | null;
 }
 
+export interface ActiveTrip {
+  id: string;
+  status: string;
+  serviceType: ServiceType;
+  deliveryType?: DeliveryType | null;
+  itemDescription?: string | null;
+  vehicleType: VehicleType;
+  pickup: Location;
+  destination: Location;
+  customerNote?: string | null;
+  driver?: {
+    id: string;
+    name: string;
+    phone: string;
+    vehiclePlate: string | null;
+  };
+}
+
 export const bookingService = {
   async createTrip(params: {
     vehicleType: VehicleType;
@@ -78,6 +96,24 @@ export const bookingService = {
 
     const data = await response.json();
     return data.data.trip;
+  },
+
+  async getActiveTrip(): Promise<ActiveTrip | null> {
+    const token = await authService.getAccessToken();
+
+    const response = await fetch(`${API_URL}/bookings/trips/active`, {
+      headers: {
+        Authorization: `Bearer ${token}`,
+      },
+    });
+
+    if (!response.ok) {
+      const error = await response.json();
+      throw new Error(error.message || "Failed to recover active trip");
+    }
+
+    const data = await response.json();
+    return data.data.trip as ActiveTrip | null;
   },
 
   async getTrips() {

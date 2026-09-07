@@ -9,7 +9,7 @@
  * - Bottom navigation (not tabs)
  */
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   View,
   Text,
@@ -28,6 +28,7 @@ import { useBookingStore } from "../../store/bookingStore";
 import { SPACING, CustomerTheme } from "../../constants/config";
 import { useTheme, useIsDarkMode } from "../../hooks/useTheme";
 import { getCurrentPickupLocation } from "../../services/location";
+import bookingService from "../../services/booking";
 
 const { width: SCREEN_WIDTH } = Dimensions.get("window");
 
@@ -38,10 +39,50 @@ export default function HomeScreen() {
   const isDarkMode = useIsDarkMode();
   const setAppearanceMode = useThemeStore((s) => s.setMode);
   const { user, logout } = useAuthStore();
-  const { pickup, destination, setPickup, reset: resetBooking } = useBookingStore();
+  const {
+    pickup,
+    destination,
+    currentTrip,
+    setPickup,
+    setCurrentTrip,
+    setRecoveredRequestedTrip,
+    reset: resetBooking,
+  } = useBookingStore();
   const [menuVisible, setMenuVisible] = useState(false);
   const [pickupLoading, setPickupLoading] = useState(false);
   const [pickupError, setPickupError] = useState<string | null>(null);
+  const recoveryAttempted = useRef(false);
+
+  useEffect(() => {
+    if (!user || currentTrip || recoveryAttempted.current) {
+      return;
+    }
+
+    recoveryAttempted.current = true;
+    let isMounted = true;
+
+    const recoverActiveTrip = async () => {
+      try {
+        const recoveredTrip = await bookingService.getActiveTrip();
+        if (!isMounted || !recoveredTrip) {
+          return;
+        }
+
+        setCurrentTrip(recoveredTrip);
+        const isRequested = recoveredTrip.status === "REQUESTED";
+        setRecoveredRequestedTrip(isRequested);
+        router.replace(isRequested ? "/trip-tracking" : "/active-trip");
+      } catch (error) {
+        console.error("Failed to recover active trip:", error);
+      }
+    };
+
+    recoverActiveTrip();
+
+    return () => {
+      isMounted = false;
+    };
+  }, [currentTrip, router, setCurrentTrip, setRecoveredRequestedTrip, user]);
 
   useEffect(() => {
     if (pickup) {

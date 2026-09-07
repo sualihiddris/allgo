@@ -25,13 +25,14 @@ interface Trip {
   destination: Location;
   vehicleType: VehicleType;
   serviceType: ServiceType;
-  deliveryType?: DeliveryType;
-  itemDescription?: string;
+  deliveryType?: DeliveryType | null;
+  itemDescription?: string | null;
+  customerNote?: string | null;
   driver?: {
     id: string;
     name: string;
     phone: string;
-    vehiclePlate: string;
+    vehiclePlate: string | null;
   };
 }
 
@@ -55,6 +56,7 @@ interface BookingState {
   
   // Current trip
   currentTrip: Trip | null;
+  isRecoveredRequestedTrip: boolean;
   isBooking: boolean;
   
   // Actions
@@ -66,6 +68,7 @@ interface BookingState {
   setItemDescription: (desc: string) => void;
   setCustomerNote: (note: string) => void;
   setCurrentTrip: (trip: Trip | null) => void;
+  setRecoveredRequestedTrip: (recovered: boolean) => void;
   setIsBooking: (loading: boolean) => void;
   reset: () => void;
 }
@@ -79,6 +82,7 @@ const initialState = {
   itemDescription: "",
   customerNote: "",
   currentTrip: null,
+  isRecoveredRequestedTrip: false,
   isBooking: false,
 };
 
@@ -106,6 +110,7 @@ export const useBookingStore = create<BookingState>((set) => ({
   setItemDescription: (desc) => set({ itemDescription: desc }),
   setCustomerNote: (note) => set({ customerNote: note }),
   setCurrentTrip: (trip) => set({ currentTrip: trip }),
+  setRecoveredRequestedTrip: (recovered) => set({ isRecoveredRequestedTrip: recovered }),
   setIsBooking: (loading) => set({ isBooking: loading }),
   reset: () => set(initialState),
 }));
