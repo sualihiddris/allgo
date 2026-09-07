@@ -350,6 +350,7 @@ export async function assignTripToDriver(tripId: string, driverId: string) {
     data: {
       driverId,
       status: "ACCEPTED",
+      dispatchStatus: null,
       acceptedAt: new Date(),
     },
   });

@@ -5,7 +5,7 @@
  * Designed for speed - minimum fields, large buttons.
  */
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import axios from 'axios';
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || '/api/v1';
@@ -13,6 +13,7 @@ const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || '/api/v1';
 interface TripStatus {
   tripId: string;
   status: string;
+  dispatchStatus?: string | null;
   driver: {
     name: string;
     phone: string;
@@ -41,6 +42,8 @@ export function CallInPage() {
   const [createdTrip, setCreatedTrip] = useState<TripStatus | null>(null);
   const [dispatchStatus, setDispatchStatus] = useState<string | null>(null);
   const [isCallInHours, setIsCallInHours] = useState(true);
+  const pollTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const pollGenerationRef = useRef(0);
 
   // Check if call-in is available
   useEffect(() => {
@@ -62,7 +65,18 @@ export function CallInPage() {
     }
   };
 
+  const stopPolling = () => {
+    pollGenerationRef.current += 1;
+    if (pollTimeoutRef.current) {
+      clearTimeout(pollTimeoutRef.current);
+      pollTimeoutRef.current = null;
+    }
+  };
+
+  useEffect(() => stopPolling, []);
+
   const resetForm = () => {
+    stopPolling();
     setCallerPhone('');
     setCallerName('');
     setPickupAddress('');
@@ -115,6 +129,7 @@ export function CallInPage() {
               phone: response.data.dispatch.nearestDriver.driverPhone,
             }
           : null,
+          dispatchStatus: response.data.dispatch?.status || 'SEARCHING',
       });
       setDispatchStatus(response.data.dispatch?.status || 'SEARCHING');
 
@@ -130,12 +145,11 @@ export function CallInPage() {
   };
 
   const pollTripStatus = async (tripId: string) => {
-    const maxAttempts = 10;
-    let attempts = 0;
+    stopPolling();
+    const generation = pollGenerationRef.current;
 
     const poll = async () => {
-      if (attempts >= maxAttempts) return;
-      attempts++;
+      if (generation !== pollGenerationRef.current) return;
 
       try {
         const response = await axios.get(
@@ -147,26 +161,34 @@ export function CallInPage() {
           }
         );
 
+        if (generation !== pollGenerationRef.current) return;
+
         setCreatedTrip((prev) =>
           prev
             ? {
                 ...prev,
                 status: response.data.status,
                 driver: response.data.driver,
+                dispatchStatus: response.data.dispatchStatus,
               }
             : null
         );
+        setDispatchStatus(response.data.dispatchStatus);
 
-        // Continue polling if not completed/cancelled
-        if (!['COMPLETED', 'CANCELLED'].includes(response.data.status)) {
-          setTimeout(poll, 3000);
+        const lifecycleTerminal = ['COMPLETED', 'CANCELLED'].includes(response.data.status);
+        const dispatchTerminal = ['NO_DRIVER_FOUND', 'FAILED'].includes(response.data.dispatchStatus);
+        if (!lifecycleTerminal && !dispatchTerminal && generation === pollGenerationRef.current) {
+          pollTimeoutRef.current = setTimeout(poll, 3000);
         }
       } catch (error) {
         console.error('Failed to poll trip status:', error);
+        if (generation === pollGenerationRef.current) {
+          pollTimeoutRef.current = setTimeout(poll, 3000);
+        }
       }
     };
 
-    setTimeout(poll, 3000);
+    pollTimeoutRef.current = setTimeout(poll, 3000);
   };
 
   // Show out-of-hours message
@@ -208,10 +230,12 @@ export function CallInPage() {
       {createdTrip && (
         <div
           className={`mb-6 p-4 rounded-lg ${
-            dispatchStatus === 'NO_DRIVER_FOUND'
+            dispatchStatus === 'NO_DRIVER_FOUND' || dispatchStatus === 'FAILED'
               ? 'bg-red-50 border border-red-200'
-              : createdTrip.status === 'ACCEPTED'
+              : ['ACCEPTED', 'ACTIVE', 'COMPLETED'].includes(createdTrip.status)
               ? 'bg-green-50 border border-green-200'
+              : createdTrip.status === 'CANCELLED'
+              ? 'bg-red-50 border border-red-200'
               : 'bg-blue-50 border border-blue-200'
           }`}
         >
@@ -220,8 +244,16 @@ export function CallInPage() {
               <h3 className="font-semibold text-lg">
                 {dispatchStatus === 'NO_DRIVER_FOUND'
                   ? '❌ No Drivers Available'
+                  : dispatchStatus === 'FAILED'
+                  ? '⚠️ Dispatch Failed'
                   : createdTrip.status === 'ACCEPTED'
                   ? '✅ Driver Assigned!'
+                  : createdTrip.status === 'ACTIVE'
+                  ? '🚗 Trip In Progress'
+                  : createdTrip.status === 'COMPLETED'
+                  ? '✅ Trip Completed'
+                  : createdTrip.status === 'CANCELLED'
+                  ? '❌ Trip Cancelled'
                   : '🔍 Searching for Driver...'}
               </h3>
 
@@ -239,16 +271,36 @@ export function CallInPage() {
                       {createdTrip.driver.phone}
                     </a>
                   </p>
-                  <p className="text-sm text-gray-500 mt-2">
-                    Tell the caller: "Your driver {createdTrip.driver.name} will call
-                    you shortly."
-                  </p>
+                  {createdTrip.status === 'ACCEPTED' && (
+                    <p className="text-sm text-gray-500 mt-2">
+                      Tell the caller: "Your driver {createdTrip.driver.name} will call
+                      you shortly."
+                    </p>
+                  )}
+                  {createdTrip.status === 'ACTIVE' && (
+                    <p className="text-sm text-green-700 mt-2">The trip is currently in progress.</p>
+                  )}
+                  {createdTrip.status === 'COMPLETED' && (
+                    <p className="text-sm text-green-700 mt-2">The trip has been completed.</p>
+                  )}
+                  {createdTrip.status === 'CANCELLED' && (
+                    <p className="text-sm text-red-700 mt-2">The trip was cancelled.</p>
+                  )}
                 </div>
               ) : dispatchStatus === 'NO_DRIVER_FOUND' ? (
                 <p className="mt-2 text-red-700">
-                  Tell the caller: "No riders are available right now. We will call
-                  you back as soon as one is available."
+                  No riders are available right now. Please try again shortly.
                 </p>
+              ) : dispatchStatus === 'FAILED' ? (
+                <p className="mt-2 text-red-700">
+                  Automatic driver dispatch failed. The trip remains requested.
+                </p>
+              ) : createdTrip.status === 'ACTIVE' ? (
+                <p className="mt-2 text-green-700">The trip is currently in progress.</p>
+              ) : createdTrip.status === 'COMPLETED' ? (
+                <p className="mt-2 text-green-700">The trip has been completed.</p>
+              ) : createdTrip.status === 'CANCELLED' ? (
+                <p className="mt-2 text-red-700">The trip was cancelled.</p>
               ) : (
                 <p className="mt-2 text-gray-600">Looking for the nearest driver...</p>
               )}

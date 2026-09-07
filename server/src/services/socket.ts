@@ -317,8 +317,20 @@ export async function dispatchTrip(tripId: string): Promise<DispatchTripResult> 
       return { status: "FAILED", reason: "Invalid trip" };
     }
 
+    const dispatchClaim = await prisma.trip.updateMany({
+      where: { id: tripId, status: "REQUESTED", driverId: null },
+      data: { dispatchStatus: "SEARCHING" },
+    });
+    if (dispatchClaim.count === 0) {
+      return { status: "FAILED", reason: "Invalid trip" };
+    }
+
     const isNight = isNightServiceHours();
     if (isNight && !isVehicleAllowedAtNight(trip.vehicleType)) {
+      await prisma.trip.updateMany({
+        where: { id: tripId, status: "REQUESTED", driverId: null },
+        data: { dispatchStatus: "NO_DRIVER_FOUND" },
+      });
       return {
         status: "NO_DRIVERS",
         message: `${trip.vehicleType} service is not available during night hours (9pm-5am). Please try MOTO or KEKE.`,
@@ -407,9 +419,21 @@ export async function dispatchTrip(tripId: string): Promise<DispatchTripResult> 
     const message = isNight
       ? "No night service drivers available right now. Please try again in a few minutes."
       : "No drivers available nearby. Please try again in a few minutes.";
+    await prisma.trip.updateMany({
+      where: { id: tripId, status: "REQUESTED", driverId: null },
+      data: { dispatchStatus: "NO_DRIVER_FOUND" },
+    });
     return { status: "NO_DRIVERS", message };
   } catch (error) {
     console.error("Error dispatching trip:", error);
+    try {
+      await prisma.trip.updateMany({
+        where: { id: tripId, status: "REQUESTED", driverId: null },
+        data: { dispatchStatus: "FAILED" },
+      });
+    } catch (persistError) {
+      console.error("Error persisting failed dispatch status:", persistError);
+    }
     return { status: "FAILED", reason: "Server error" };
   }
 }

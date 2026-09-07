@@ -1,0 +1,2 @@
+ALTER TABLE `trips`
+  ADD COLUMN `dispatchStatus` ENUM('SEARCHING', 'NO_DRIVER_FOUND', 'FAILED') NULL;

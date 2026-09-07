@@ -6,6 +6,7 @@ const { prisma, trips } = vi.hoisted(() => {
     status: string;
     driverId: string | null;
     acceptedAt: Date | null;
+    dispatchStatus: string | null;
   }>();
 
   const prisma = {
@@ -48,6 +49,7 @@ describe("assignTripToDriver", () => {
       status: "REQUESTED",
       driverId: null,
       acceptedAt: null,
+      dispatchStatus: "SEARCHING",
     });
   });
 
@@ -60,6 +62,7 @@ describe("assignTripToDriver", () => {
     expect(prisma.trip.updateMany).toHaveBeenCalledWith(
       expect.objectContaining({
         where: { id: "trip-1", status: "REQUESTED", driverId: null },
+        data: expect.objectContaining({ dispatchStatus: null }),
       })
     );
   });
