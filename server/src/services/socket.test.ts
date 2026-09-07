@@ -13,11 +13,15 @@ const mocks = vi.hoisted(() => ({
   registerActiveTrip: vi.fn(),
   sendPushNotification: vi.fn(),
   driverFindUnique: vi.fn(),
+  tripUpdateMany: vi.fn(),
 }));
 
 vi.mock("../config", () => ({ env: { NODE_ENV: "test" } }));
 vi.mock("../config/database", () => ({
-  prisma: { driver: { findUnique: mocks.driverFindUnique } },
+  prisma: {
+    driver: { findUnique: mocks.driverFindUnique },
+    trip: { updateMany: mocks.tripUpdateMany },
+  },
 }));
 vi.mock("../services/trip", () => ({ getTripById: mocks.getTripById }));
 vi.mock("../services/dispatch", () => ({
@@ -91,6 +95,7 @@ describe("dispatchTrip", () => {
     mocks.isVehicleAllowedAtNight.mockReturnValue(true);
     mocks.isDriverAvailable.mockResolvedValue(true);
     mocks.driverFindUnique.mockResolvedValue({ id: "driver-1", pushToken: null });
+    mocks.tripUpdateMany.mockResolvedValue({ count: 1 });
     await setupSocketIO(createServer());
   });
 
@@ -100,6 +105,52 @@ describe("dispatchTrip", () => {
     await expect(dispatchTrip("trip-1")).resolves.toEqual({
       status: "NO_DRIVERS",
       message: "No drivers available nearby. Please try again in a few minutes.",
+    });
+    expect(mocks.tripUpdateMany).toHaveBeenNthCalledWith(1, {
+      where: { id: "trip-1", status: "REQUESTED", driverId: null },
+      data: { dispatchStatus: "SEARCHING" },
+    });
+    expect(mocks.tripUpdateMany).toHaveBeenNthCalledWith(2, {
+      where: { id: "trip-1", status: "REQUESTED", driverId: null },
+      data: { dispatchStatus: "NO_DRIVER_FOUND" },
+    });
+  });
+
+  it("sets SEARCHING when dispatch begins", async () => {
+    mocks.findNearbyDrivers.mockResolvedValue([]);
+
+    await dispatchTrip("trip-1");
+
+    expect(mocks.tripUpdateMany).toHaveBeenCalledWith({
+      where: { id: "trip-1", status: "REQUESTED", driverId: null },
+      data: { dispatchStatus: "SEARCHING" },
+    });
+  });
+
+  it("stops before offering when the lifecycle-safe SEARCHING claim loses the race", async () => {
+    mocks.tripUpdateMany.mockResolvedValueOnce({ count: 0 });
+
+    await expect(dispatchTrip("trip-1")).resolves.toEqual({
+      status: "FAILED",
+      reason: "Invalid trip",
+    });
+    expect(mocks.findNearbyDrivers).not.toHaveBeenCalled();
+    expect(mocks.tripUpdateMany).toHaveBeenCalledWith({
+      where: { id: "trip-1", status: "REQUESTED", driverId: null },
+      data: { dispatchStatus: "SEARCHING" },
+    });
+  });
+
+  it("persists FAILED when dispatch encounters an internal error", async () => {
+    mocks.findNearbyDrivers.mockRejectedValue(new Error("redis unavailable"));
+
+    await expect(dispatchTrip("trip-1")).resolves.toEqual({
+      status: "FAILED",
+      reason: "Server error",
+    });
+    expect(mocks.tripUpdateMany).toHaveBeenLastCalledWith({
+      where: { id: "trip-1", status: "REQUESTED", driverId: null },
+      data: { dispatchStatus: "FAILED" },
     });
   });
 
@@ -153,11 +204,70 @@ describe("dispatchTrip", () => {
 
     await expect(dispatchPromise).resolves.toMatchObject({ status: "ACCEPTED" });
     expect(mocks.assignTripToDriver).toHaveBeenCalledWith("trip-1", "driver-1");
+    expect(mocks.tripUpdateMany).toHaveBeenCalledWith({
+      where: { id: "trip-1", status: "REQUESTED", driverId: null },
+      data: { dispatchStatus: "SEARCHING" },
+    });
     expect(mocks.registerActiveTrip).toHaveBeenCalledWith("driver-1", "trip-1");
     expect(ioMock.emissions).toContainEqual({
       room: "driver:driver-1",
       event: "trip:confirmed",
       payload: { tripId: "trip-1" },
+    });
+  });
+
+  it("does not overwrite an accepted trip when post-assignment work fails", async () => {
+    mocks.findNearbyDrivers.mockResolvedValue([{ driverId: "driver-1" }]);
+    mocks.getJobTimeout.mockReturnValue(10);
+    mocks.assignTripToDriver.mockResolvedValue({
+      driver: {
+        id: "driver-1",
+        vehicleType: "MOTO",
+        licensePlate: "GT-1",
+        user: { name: "Driver", phone: "0200000000" },
+      },
+    });
+    mocks.registerActiveTrip.mockRejectedValue(new Error("tracking unavailable"));
+
+    const handlers: Record<string, (tripId: string) => void> = {};
+    ioMock.getConnectionHandler()!({
+      role: "DRIVER",
+      driverId: "driver-1",
+      driverRoomReady: Promise.resolve(),
+      join: vi.fn(),
+      emit: vi.fn(),
+      on: (event: string, handler: (tripId: string) => void) => {
+        handlers[event] = handler;
+      },
+    });
+
+    const dispatchPromise = dispatchTrip("trip-1");
+    for (let attempt = 0; attempt < 20 && ioMock.emissions.length === 0; attempt += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    }
+    handlers["trip:accept"]("trip-1");
+
+    await expect(dispatchPromise).resolves.toEqual({
+      status: "FAILED",
+      reason: "Server error",
+    });
+    expect(mocks.tripUpdateMany).toHaveBeenLastCalledWith({
+      where: { id: "trip-1", status: "REQUESTED", driverId: null },
+      data: { dispatchStatus: "FAILED" },
+    });
+  });
+
+  it("persists NO_DRIVER_FOUND safely for a night-restricted vehicle", async () => {
+    mocks.isNightServiceHours.mockReturnValue(true);
+    mocks.isVehicleAllowedAtNight.mockReturnValue(false);
+
+    await expect(dispatchTrip("trip-1")).resolves.toMatchObject({
+      status: "NO_DRIVERS",
+    });
+    expect(mocks.findNearbyDrivers).not.toHaveBeenCalled();
+    expect(mocks.tripUpdateMany).toHaveBeenNthCalledWith(2, {
+      where: { id: "trip-1", status: "REQUESTED", driverId: null },
+      data: { dispatchStatus: "NO_DRIVER_FOUND" },
     });
   });
 

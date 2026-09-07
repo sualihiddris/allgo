@@ -220,6 +220,7 @@ model Trip {
   customerNote    String?       @db.VarChar(500)
   distanceMeters  Int?
   status          TripStatus    @default(REQUESTED)
+  dispatchStatus  DispatchStatus?
   cancelledBy     String?
   cancelReason    String?       @db.VarChar(500)
   createdAt       DateTime      @default(now())
@@ -285,4 +286,10 @@ enum TripStatus {
   ACTIVE
   COMPLETED
   CANCELLED
+}
+
+enum DispatchStatus {
+  SEARCHING
+  NO_DRIVER_FOUND
+  FAILED
 }
