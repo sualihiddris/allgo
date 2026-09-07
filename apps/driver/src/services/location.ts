@@ -22,11 +22,12 @@ export interface LocationData {
 
 class LocationService {
   private watchId: Location.LocationSubscription | null = null;
-  private testLocationHeartbeat: ReturnType<typeof setInterval> | null = null;
+  private trackingHeartbeat: ReturnType<typeof setInterval> | null = null;
   private isTracking = false;
   private lastSentLocation: LocationData | null = null;
   private updateInterval = 5000; // Send updates every 5 seconds
   private minDistanceMeters = 10; // Only send if moved > 10 meters
+  private heartbeatInterval = 30000;
 
   private getDevelopmentTestLocation(): LocationData | null {
     if (!__DEV__ || Platform.OS !== "web") return null;
@@ -50,6 +51,19 @@ class LocationService {
     }
 
     return { lat, lng, timestamp: Date.now() };
+  }
+
+  private startTrackingHeartbeat(): void {
+    if (this.trackingHeartbeat) return;
+
+    this.trackingHeartbeat = setInterval(() => {
+      if (!this.isTracking || !this.lastSentLocation) return;
+
+      this.sendLocationUpdate({
+        ...this.lastSentLocation,
+        timestamp: Date.now(),
+      });
+    }, this.heartbeatInterval);
   }
 
   /**
@@ -125,12 +139,7 @@ class LocationService {
       console.log("Development web test-location mode active");
       this.isTracking = true;
       this.sendLocationUpdate(testLocation);
-      this.testLocationHeartbeat = setInterval(() => {
-        this.sendLocationUpdate({
-          ...testLocation,
-          timestamp: Date.now(),
-        });
-      }, 30000);
+      this.startTrackingHeartbeat();
       console.log("✅ Location tracking started");
       return true;
     }
@@ -160,6 +169,7 @@ class LocationService {
       );
 
       this.isTracking = true;
+      this.startTrackingHeartbeat();
       console.log("✅ Location tracking started");
       return true;
     } catch (error) {
@@ -172,9 +182,9 @@ class LocationService {
    * Stop watching location
    */
   stopTracking(): void {
-    if (this.testLocationHeartbeat) {
-      clearInterval(this.testLocationHeartbeat);
-      this.testLocationHeartbeat = null;
+    if (this.trackingHeartbeat) {
+      clearInterval(this.trackingHeartbeat);
+      this.trackingHeartbeat = null;
     }
 
     if (this.watchId) {
