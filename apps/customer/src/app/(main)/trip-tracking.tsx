@@ -40,7 +40,7 @@ export default function TripTrackingScreen() {
   const router = useRouter();
   const theme = useTheme();
   const styles = createStyles(theme);
-  const { currentTrip, reset, setCurrentTrip } = useBookingStore();
+  const { currentTrip, isRecoveredRequestedTrip, reset, setCurrentTrip } = useBookingStore();
   
   const [tripState, setTripState] = useState<TripState>("SEARCHING");
   const [driver, setDriver] = useState<TripAcceptedData["driver"] | null>(null);
@@ -60,16 +60,26 @@ export default function TripTrackingScreen() {
     const isNight = hour >= 21 || hour < 5;
     setSearchTimeout(isNight ? 45 : 30);
 
-    // Connect socket and start dispatch
-    initializeTrip();
+    let isUnmounted = false;
+    let cleanupListeners: (() => void) | undefined;
+
+    initializeTrip().then((cleanup) => {
+      if (isUnmounted) {
+        cleanup?.();
+      } else {
+        cleanupListeners = cleanup;
+      }
+    });
 
     return () => {
+      isUnmounted = true;
       if (searchTimerRef.current) {
         clearTimeout(searchTimerRef.current);
       }
+      cleanupListeners?.();
       socketService.disconnect();
     };
-  }, [currentTrip?.id]);
+  }, [currentTrip?.id, isRecoveredRequestedTrip]);
 
   useEffect(() => {
     // Pulse animation for searching state
@@ -83,21 +93,22 @@ export default function TripTrackingScreen() {
     }
   }, [tripState]);
 
-  const initializeTrip = async () => {
-    if (!currentTrip?.id) return;
+  const initializeTrip = async (): Promise<(() => void) | undefined> => {
+    if (!currentTrip?.id) return undefined;
 
     try {
       // Connect to socket
       await socketService.connect();
 
       // Set up event listeners
-      socketService.onTripAccepted(handleTripAccepted);
-      socketService.onTripNoDrivers(handleNoDrivers);
-      socketService.onTripStatus(handleTripStatus);
-      socketService.onDriverLocation(handleDriverLocation);
+      const unsubTripAccepted = socketService.onTripAccepted(handleTripAccepted);
+      const unsubNoDrivers = socketService.onTripNoDrivers(handleNoDrivers);
+      const unsubTripStatus = socketService.onTripStatus(handleTripStatus);
+      const unsubDriverLocation = socketService.onDriverLocation(handleDriverLocation);
 
-      // Dispatch trip
-      socketService.dispatchTrip(currentTrip.id);
+      if (!isRecoveredRequestedTrip) {
+        socketService.dispatchTrip(currentTrip.id);
+      }
 
       // Start search timeout
       searchTimerRef.current = setTimeout(() => {
@@ -105,10 +116,18 @@ export default function TripTrackingScreen() {
           setTripState("NO_DRIVER_FOUND");
         }
       }, searchTimeout * 1000);
+
+      return () => {
+        unsubTripAccepted();
+        unsubNoDrivers();
+        unsubTripStatus();
+        unsubDriverLocation();
+      };
     } catch (error) {
       console.error("Failed to initialize trip:", error);
       Alert.alert("Error", "Failed to connect. Please try again.");
       router.back();
+      return undefined;
     }
   };
 
@@ -143,6 +162,7 @@ export default function TripTrackingScreen() {
     
     const statusMap: Record<string, TripState> = {
       ARRIVED: "ARRIVED",
+      ACTIVE: "STARTED",
       STARTED: "STARTED",
       COMPLETED: "COMPLETED",
       CANCELLED: "CANCELLED",
@@ -216,6 +236,19 @@ export default function TripTrackingScreen() {
     }
   };
 
+  const handleGoHome = async () => {
+    if (!currentTrip?.id) return;
+
+    try {
+      await bookingService.cancelTrip(currentTrip.id, "No drivers available");
+      reset();
+      router.replace("/home");
+    } catch (error) {
+      console.error("Failed to cancel trip before leaving:", error);
+      Alert.alert("Error", "Failed to cancel trip. Please try again.");
+    }
+  };
+
   const handleCallDriver = () => {
     if (driver?.phone) {
       const phoneUrl = `tel:${driver.phone}`;
@@ -258,11 +291,8 @@ export default function TripTrackingScreen() {
             <TouchableOpacity style={styles.primaryButton} onPress={handleRetrySearch}>
               <Text style={styles.primaryButtonText}>Try Again</Text>
             </TouchableOpacity>
-            <TouchableOpacity style={styles.secondaryButton} onPress={() => {
-              reset();
-              router.replace("/home");
-            }}>
-              <Text style={styles.secondaryButtonText}>Go Home</Text>
+            <TouchableOpacity style={styles.secondaryButton} onPress={handleGoHome}>
+              <Text style={styles.secondaryButtonText}>Cancel & Go Home</Text>
             </TouchableOpacity>
           </View>
         );

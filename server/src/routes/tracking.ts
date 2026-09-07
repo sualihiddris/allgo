@@ -191,7 +191,12 @@ router.put(
       // separate connection (the one that dispatched the trip), so a plain
       // REST update here would otherwise leave them stuck on "Searching..."
       if (trip.customer) {
-        getIO().to(`customer:${trip.customer.userId}`).emit("trip:status", { status });
+        getIO()
+          .to(`customer:${trip.customer.userId}`)
+          .emit("trip:status", {
+            tripId: updatedTrip.id,
+            status: updatedTrip.status,
+          });
       }
 
       sendSuccess(res, {

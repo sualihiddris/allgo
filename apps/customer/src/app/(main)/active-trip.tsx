@@ -22,6 +22,7 @@ import {
 } from "react-native";
 import { useRouter, Redirect } from "expo-router";
 import { useBookingStore } from "../../store/bookingStore";
+import bookingService from "../../services/booking";
 import { socketService, DriverLocation } from "../../services/socket";
 import { CustomerTheme } from "../../constants/config";
 import { useTheme } from "../../hooks/useTheme";
@@ -32,6 +33,7 @@ function getStatusLabels(theme: CustomerTheme): Record<string, { label: string; 
     REQUESTED: { label: "Finding driver...", color: theme.warning },
     ACCEPTED: { label: "Driver assigned", color: theme.primary },
     ARRIVING: { label: "Driver is on the way", color: theme.primary },
+    ACTIVE: { label: "Trip in progress", color: theme.success },
     IN_PROGRESS: { label: "Trip in progress", color: theme.success },
     COMPLETED: { label: "Trip completed", color: theme.success },
     CANCELLED: { label: "Trip cancelled", color: theme.danger },
@@ -43,7 +45,7 @@ export default function ActiveTripScreen() {
   const theme = useTheme();
   const styles = createStyles(theme);
   const STATUS_LABELS = getStatusLabels(theme);
-  const { currentTrip, setCurrentTrip } = useBookingStore();
+  const { currentTrip, reset, setCurrentTrip } = useBookingStore();
   const [driverLocation, setDriverLocation] = useState<DriverLocation | null>(null);
   const [isConnecting, setIsConnecting] = useState(true);
   const [lastUpdate, setLastUpdate] = useState<Date | null>(null);
@@ -57,15 +59,26 @@ export default function ActiveTripScreen() {
       return;
     }
 
-    initializeTracking();
+    let isUnmounted = false;
+    let cleanupListeners: (() => void) | undefined;
+
+    initializeTracking().then((cleanup) => {
+      if (isUnmounted) {
+        cleanup?.();
+      } else {
+        cleanupListeners = cleanup;
+      }
+    });
 
     return () => {
+      isUnmounted = true;
+      cleanupListeners?.();
       socketService.stopTracking(currentTrip.id);
     };
   }, [currentTrip?.id]);
 
-  const initializeTracking = async () => {
-    if (!currentTrip) return;
+  const initializeTracking = async (): Promise<(() => void) | undefined> => {
+    if (!currentTrip) return undefined;
 
     setIsConnecting(true);
     
@@ -116,6 +129,7 @@ export default function ActiveTripScreen() {
     } catch (error) {
       console.error("Error initializing tracking:", error);
       setIsConnecting(false);
+      return undefined;
     }
   };
 
@@ -128,10 +142,19 @@ export default function ActiveTripScreen() {
     }
   };
 
-  const handleCancelTrip = () => {
-    // TODO: Implement trip cancellation
-    setCurrentTrip(null);
-    router.replace("/(main)/home");
+  const handleCancelTrip = async () => {
+    if (!currentTrip || currentTrip.status === "ACTIVE") {
+      return;
+    }
+
+    try {
+      await bookingService.cancelTrip(currentTrip.id, "Customer cancelled");
+      reset();
+      router.replace("/(main)/home");
+    } catch (error) {
+      console.error("Failed to cancel trip:", error);
+      Alert.alert("Error", "Failed to cancel trip. Please try again.");
+    }
   };
 
   // Section 20: Share Trip for safety
@@ -262,7 +285,7 @@ export default function ActiveTripScreen() {
         </View>
 
         {/* Cancel button (only show if not in progress) */}
-        {currentTrip.status !== "IN_PROGRESS" && currentTrip.status !== "COMPLETED" && (
+        {currentTrip.status !== "ACTIVE" && currentTrip.status !== "IN_PROGRESS" && currentTrip.status !== "COMPLETED" && (
           <TouchableOpacity style={styles.cancelButton} onPress={handleCancelTrip}>
             <Text style={styles.cancelButtonText}>Cancel Trip</Text>
           </TouchableOpacity>
