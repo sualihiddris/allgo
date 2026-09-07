@@ -9,6 +9,13 @@ const mocks = vi.hoisted(() => ({
   geocode: vi.fn(),
   tripUpdateMany: vi.fn(),
   tripFindUnique: vi.fn(),
+  driverFindMany: vi.fn(),
+  driverCount: vi.fn(),
+  customerCount: vi.fn(),
+  tripCount: vi.fn(),
+  feedbackCount: vi.fn(),
+  getDriverLocation: vi.fn(),
+  resolveBranchFilter: vi.fn(),
 }));
 
 vi.mock("../middleware/auth", () => ({
@@ -22,7 +29,7 @@ vi.mock("../middleware/branchScope", () => ({
   },
   requireSuperAdmin: (_req: any, _res: any, next: () => void) => next(),
   branchReadScope: () => ({}),
-  resolveBranchFilter: () => undefined,
+  resolveBranchFilter: mocks.resolveBranchFilter,
   assertBranchWriteAccess: () => undefined,
 }));
 vi.mock("../config/database", () => ({
@@ -30,12 +37,20 @@ vi.mock("../config/database", () => ({
     trip: {
       updateMany: mocks.tripUpdateMany,
       findUnique: mocks.tripFindUnique,
+      count: mocks.tripCount,
     },
+    driver: {
+      findMany: mocks.driverFindMany,
+      count: mocks.driverCount,
+    },
+    customer: { count: mocks.customerCount },
+    feedback: { count: mocks.feedbackCount },
   },
 }));
 vi.mock("../services/trip", () => ({ createTrip: mocks.createTrip }));
 vi.mock("../services/dispatch", () => ({
   findDriverWithExpansion: mocks.findDriverWithExpansion,
+  getDriverLocation: mocks.getDriverLocation,
   isNightServiceHours: vi.fn(() => false),
 }));
 vi.mock("../services/socket", () => ({ dispatchTrip: mocks.dispatchTrip }));
@@ -118,6 +133,87 @@ describe("POST /api/v1/admin/trips/call-in", () => {
     expect(mocks.tripUpdateMany).toHaveBeenCalledWith({
       where: { id: createdTrip.id, status: "REQUESTED", driverId: null },
       data: { dispatchStatus: "SEARCHING" },
+    });
+  });
+
+  describe("Admin effective driver presence", () => {
+    beforeEach(() => {
+      vi.clearAllMocks();
+      mocks.resolveBranchFilter.mockReturnValue(undefined);
+      mocks.getDriverLocation.mockResolvedValue(null);
+      mocks.driverCount.mockResolvedValue(0);
+      mocks.customerCount.mockResolvedValue(0);
+      mocks.tripCount.mockResolvedValue(0);
+      mocks.feedbackCount.mockResolvedValue(0);
+    });
+
+    it("reports only fresh intent-online drivers as online", async () => {
+      mocks.driverFindMany.mockResolvedValue([
+        {
+          id: "driver-fresh",
+          userId: "user-fresh",
+          branchId: null,
+          isOnline: true,
+          isApproved: true,
+          vehicleType: "MOTO",
+          licensePlate: "GT-1",
+          user: { id: "user-fresh", name: "Fresh", phone: "0201", createdAt: new Date() },
+        },
+        {
+          id: "driver-stale",
+          userId: "user-stale",
+          branchId: null,
+          isOnline: true,
+          isApproved: true,
+          vehicleType: "MOTO",
+          licensePlate: null,
+          user: { id: "user-stale", name: "Stale", phone: "0202", createdAt: new Date() },
+        },
+        {
+          id: "driver-offline",
+          userId: "user-offline",
+          branchId: null,
+          isOnline: false,
+          isApproved: true,
+          vehicleType: "MOTO",
+          licensePlate: null,
+          user: { id: "user-offline", name: "Offline", phone: "0203", createdAt: new Date() },
+        },
+      ]);
+      mocks.getDriverLocation.mockImplementation(async (driverId: string) =>
+        driverId === "driver-fresh" ? { lat: 5, lng: -1, timestamp: Date.now() } : null
+      );
+
+      const response = await request(app).get("/api/v1/admin/drivers");
+
+      expect(response.status).toBe(200);
+      expect(response.body.drivers.map((driver: any) => driver.isOnline)).toEqual([true, false, false]);
+      expect(mocks.driverFindMany).toHaveBeenCalledWith(
+        expect.objectContaining({ where: {} })
+      );
+    });
+
+    it("counts only fresh intent-online drivers and preserves branch filtering", async () => {
+      mocks.resolveBranchFilter.mockReturnValue("branch-1");
+      mocks.driverFindMany.mockResolvedValue([
+        { id: "driver-fresh", nightMode: true },
+        { id: "driver-stale", nightMode: true },
+        { id: "driver-day", nightMode: false },
+      ]);
+      mocks.getDriverLocation.mockImplementation(async (driverId: string) =>
+        driverId === "driver-stale" ? null : { lat: 5, lng: -1, timestamp: Date.now() }
+      );
+
+      const response = await request(app).get("/api/v1/admin/stats");
+
+      expect(response.status).toBe(200);
+      expect(response.body.drivers.online).toBe(2);
+      expect(response.body.drivers.nightModeActive).toBe(1);
+      expect(mocks.driverFindMany).toHaveBeenCalledWith({
+        where: { branchId: "branch-1", isOnline: true },
+        select: { id: true, nightMode: true },
+      });
+      expect(mocks.driverCount).toHaveBeenCalledWith({ where: { branchId: "branch-1" } });
     });
   });
 
