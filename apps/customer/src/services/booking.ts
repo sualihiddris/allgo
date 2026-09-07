@@ -35,6 +35,7 @@ interface TripHistoryItem {
 export interface ActiveTrip {
   id: string;
   status: string;
+  dispatchStatus: "SEARCHING" | "NO_DRIVER_FOUND" | "FAILED" | null;
   serviceType: ServiceType;
   deliveryType?: DeliveryType | null;
   itemDescription?: string | null;

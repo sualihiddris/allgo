@@ -21,6 +21,7 @@ interface Location {
 interface Trip {
   id: string;
   status: string;
+  dispatchStatus?: "SEARCHING" | "NO_DRIVER_FOUND" | "FAILED" | null;
   pickup: Location;
   destination: Location;
   vehicleType: VehicleType;

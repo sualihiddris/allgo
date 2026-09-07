@@ -220,6 +220,7 @@ router.get(
         select: {
           id: true,
           status: true,
+          dispatchStatus: true,
           serviceType: true,
           deliveryType: true,
           itemDescription: true,
@@ -246,6 +247,7 @@ router.get(
           ? {
               id: trip.id,
               status: trip.status,
+              dispatchStatus: trip.dispatchStatus,
               serviceType: trip.serviceType,
               deliveryType: trip.deliveryType,
               itemDescription: trip.itemDescription,
