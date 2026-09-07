@@ -9,6 +9,7 @@ import { useState, useEffect, useRef } from 'react';
 import axios from 'axios';
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || '/api/v1';
+const ADMIN_CALL_IN_TRIP_ID_KEY = 'ALLGO_ADMIN_CALL_IN_TRIP_ID';
 
 interface TripStatus {
   tripId: string;
@@ -52,6 +53,13 @@ export function CallInPage() {
     return () => clearInterval(interval);
   }, []);
 
+  useEffect(() => {
+    const storedTripId = localStorage.getItem(ADMIN_CALL_IN_TRIP_ID_KEY);
+    if (storedTripId) {
+      pollTripStatus(storedTripId, true);
+    }
+  }, []);
+
   const checkCallInHours = async () => {
     try {
       const response = await axios.get(`${API_BASE_URL}/admin/stats`, {
@@ -89,6 +97,7 @@ export function CallInPage() {
     setCreatedTrip(null);
     setDispatchStatus(null);
     setError(null);
+    localStorage.removeItem(ADMIN_CALL_IN_TRIP_ID_KEY);
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -131,6 +140,7 @@ export function CallInPage() {
           : null,
           dispatchStatus: response.data.dispatch?.status || 'SEARCHING',
       });
+      localStorage.setItem(ADMIN_CALL_IN_TRIP_ID_KEY, response.data.trip.id);
       setDispatchStatus(response.data.dispatch?.status || 'SEARCHING');
 
       // Poll for status updates
@@ -144,7 +154,7 @@ export function CallInPage() {
     }
   };
 
-  const pollTripStatus = async (tripId: string) => {
+  const pollTripStatus = async (tripId: string, immediate = false) => {
     stopPolling();
     const generation = pollGenerationRef.current;
 
@@ -163,16 +173,12 @@ export function CallInPage() {
 
         if (generation !== pollGenerationRef.current) return;
 
-        setCreatedTrip((prev) =>
-          prev
-            ? {
-                ...prev,
-                status: response.data.status,
-                driver: response.data.driver,
-                dispatchStatus: response.data.dispatchStatus,
-              }
-            : null
-        );
+        setCreatedTrip((prev) => ({
+          tripId,
+          status: response.data.status,
+          driver: response.data.driver,
+          dispatchStatus: response.data.dispatchStatus,
+        }));
         setDispatchStatus(response.data.dispatchStatus);
 
         const lifecycleTerminal = ['COMPLETED', 'CANCELLED'].includes(response.data.status);
@@ -181,14 +187,21 @@ export function CallInPage() {
           pollTimeoutRef.current = setTimeout(poll, 3000);
         }
       } catch (error) {
-        console.error('Failed to poll trip status:', error);
-        if (generation === pollGenerationRef.current) {
-          pollTimeoutRef.current = setTimeout(poll, 3000);
+        if (generation !== pollGenerationRef.current) return;
+
+        if (axios.isAxiosError(error) && error.response?.status === 404) {
+          localStorage.removeItem(ADMIN_CALL_IN_TRIP_ID_KEY);
+          setCreatedTrip(null);
+          setDispatchStatus(null);
+          stopPolling();
+          return;
         }
+        console.error('Failed to poll trip status:', error);
+        pollTimeoutRef.current = setTimeout(poll, 3000);
       }
     };
 
-    pollTimeoutRef.current = setTimeout(poll, 3000);
+    pollTimeoutRef.current = setTimeout(poll, immediate ? 0 : 3000);
   };
 
   // Show out-of-hours message
