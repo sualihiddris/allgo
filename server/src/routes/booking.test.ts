@@ -39,6 +39,7 @@ app.use("/api/v1/bookings", bookingRouter);
 const activeTrip = {
   id: "trip-newest",
   status: "ACTIVE",
+  dispatchStatus: null,
   serviceType: "PASSENGER",
   deliveryType: null,
   itemDescription: null,
@@ -82,6 +83,7 @@ describe("GET /api/v1/bookings/trips/active", () => {
     expect(response.body.data.trip).toEqual({
       id: "trip-newest",
       status: "ACTIVE",
+      dispatchStatus: null,
       serviceType: "PASSENGER",
       deliveryType: null,
       itemDescription: null,
@@ -111,6 +113,7 @@ describe("GET /api/v1/bookings/trips/active", () => {
           customerId: "customer-1",
           status: { in: ["REQUESTED", "ACCEPTED", "ACTIVE"] },
         },
+        select: expect.objectContaining({ dispatchStatus: true }),
         orderBy: { createdAt: "desc" },
       })
     );
@@ -128,5 +131,39 @@ describe("GET /api/v1/bookings/trips/active", () => {
     expect(response.status).toBe(200);
     expect(response.body.data.trip).not.toHaveProperty("driver");
     expect(response.body.data.trip.status).toBe("REQUESTED");
+  });
+
+  it.each(["SEARCHING", "NO_DRIVER_FOUND", "FAILED"] as const)(
+    "returns REQUESTED dispatchStatus %s for recovery",
+    async (dispatchStatus) => {
+      mocks.tripFindFirst.mockResolvedValue({
+        ...activeTrip,
+        status: "REQUESTED",
+        dispatchStatus,
+        driver: null,
+      });
+
+      const response = await request(app).get("/api/v1/bookings/trips/active");
+
+      expect(response.status).toBe(200);
+      expect(response.body.data.trip).toMatchObject({
+        status: "REQUESTED",
+        dispatchStatus,
+      });
+    }
+  );
+
+  it("preserves dispatchStatus for accepted and active trips", async () => {
+    for (const status of ["ACCEPTED", "ACTIVE"] as const) {
+      mocks.tripFindFirst.mockResolvedValue({
+        ...activeTrip,
+        status,
+        dispatchStatus: null,
+      });
+
+      const response = await request(app).get("/api/v1/bookings/trips/active");
+
+      expect(response.body.data.trip).toMatchObject({ status, dispatchStatus: null });
+    }
   });
 });

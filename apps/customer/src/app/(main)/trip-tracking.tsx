@@ -4,8 +4,9 @@
  * Handles the full trip flow:
  * 1. SEARCHING: "Searching for drivers..." with cancel option
  * 2. NO_DRIVER_FOUND: "No drivers available" with retry
- * 3. ACCEPTED: Show driver info and start tracking
- * 4. ARRIVED/STARTED/COMPLETED: Show trip progress
+ * 3. FAILED: Dispatch failure with retry
+ * 4. ACCEPTED: Show driver info and start tracking
+ * 5. ARRIVED/STARTED/COMPLETED: Show trip progress
  */
 
 import { useEffect, useState, useRef } from "react";
@@ -30,6 +31,7 @@ import bookingService from "../../services/booking";
 type TripState = 
   | "SEARCHING" 
   | "NO_DRIVER_FOUND" 
+  | "FAILED"
   | "ACCEPTED" 
   | "ARRIVED" 
   | "STARTED" 
@@ -45,20 +47,23 @@ export default function TripTrackingScreen() {
   const [tripState, setTripState] = useState<TripState>("SEARCHING");
   const [driver, setDriver] = useState<TripAcceptedData["driver"] | null>(null);
   const [driverLocation, setDriverLocation] = useState<DriverLocation | null>(null);
-  const [searchTimeout, setSearchTimeout] = useState(30); // 30s for day, 45s for night
   
   const pulseAnim = useRef(new Animated.Value(1)).current;
-  const searchTimerRef = useRef<NodeJS.Timeout | null>(null);
 
   useEffect(() => {
     if (!currentTrip?.id) {
       return;
     }
 
-    // Check if night mode (9pm - 5am) for 45s timeout
-    const hour = new Date().getHours();
-    const isNight = hour >= 21 || hour < 5;
-    setSearchTimeout(isNight ? 45 : 30);
+    if (currentTrip.status === "REQUESTED") {
+      setTripState(
+        currentTrip.dispatchStatus === "NO_DRIVER_FOUND"
+          ? "NO_DRIVER_FOUND"
+          : currentTrip.dispatchStatus === "FAILED"
+            ? "FAILED"
+            : "SEARCHING"
+      );
+    }
 
     let isUnmounted = false;
     let cleanupListeners: (() => void) | undefined;
@@ -73,9 +78,6 @@ export default function TripTrackingScreen() {
 
     return () => {
       isUnmounted = true;
-      if (searchTimerRef.current) {
-        clearTimeout(searchTimerRef.current);
-      }
       cleanupListeners?.();
       socketService.disconnect();
     };
@@ -103,6 +105,7 @@ export default function TripTrackingScreen() {
       // Set up event listeners
       const unsubTripAccepted = socketService.onTripAccepted(handleTripAccepted);
       const unsubNoDrivers = socketService.onTripNoDrivers(handleNoDrivers);
+      const unsubTripFailed = socketService.onTripFailed(handleTripFailed);
       const unsubTripStatus = socketService.onTripStatus(handleTripStatus);
       const unsubDriverLocation = socketService.onDriverLocation(handleDriverLocation);
 
@@ -110,16 +113,10 @@ export default function TripTrackingScreen() {
         socketService.dispatchTrip(currentTrip.id);
       }
 
-      // Start search timeout
-      searchTimerRef.current = setTimeout(() => {
-        if (tripState === "SEARCHING") {
-          setTripState("NO_DRIVER_FOUND");
-        }
-      }, searchTimeout * 1000);
-
       return () => {
         unsubTripAccepted();
         unsubNoDrivers();
+        unsubTripFailed();
         unsubTripStatus();
         unsubDriverLocation();
       };
@@ -134,12 +131,11 @@ export default function TripTrackingScreen() {
   const handleTripAccepted = (data: TripAcceptedData) => {
     console.log("Trip accepted by driver:", data);
     
-    if (searchTimerRef.current) {
-      clearTimeout(searchTimerRef.current);
-    }
-    
     setDriver(data.driver);
     setTripState("ACCEPTED");
+    if (currentTrip) {
+      setCurrentTrip({ ...currentTrip, status: "ACCEPTED", dispatchStatus: null });
+    }
     
     // Start tracking driver location
     if (currentTrip?.id) {
@@ -147,17 +143,26 @@ export default function TripTrackingScreen() {
     }
   };
 
-  const handleNoDrivers = () => {
+  const handleNoDrivers = (data: { tripId: string; message?: string }) => {
+    if (data.tripId !== currentTrip?.id) return;
     console.log("No drivers found");
-    
-    if (searchTimerRef.current) {
-      clearTimeout(searchTimerRef.current);
-    }
-    
     setTripState("NO_DRIVER_FOUND");
+    if (currentTrip) {
+      setCurrentTrip({ ...currentTrip, dispatchStatus: "NO_DRIVER_FOUND" });
+    }
   };
 
-  const handleTripStatus = (data: { status: string }) => {
+  const handleTripFailed = (data: { tripId: string; reason: string }) => {
+    if (data.tripId !== currentTrip?.id) return;
+    console.log("Trip dispatch failed");
+    setTripState("FAILED");
+    if (currentTrip) {
+      setCurrentTrip({ ...currentTrip, dispatchStatus: "FAILED" });
+    }
+  };
+
+  const handleTripStatus = (data: { tripId: string; status: string }) => {
+    if (data.tripId !== currentTrip?.id) return;
     console.log("Trip status update:", data);
     
     const statusMap: Record<string, TripState> = {
@@ -171,6 +176,13 @@ export default function TripTrackingScreen() {
     const newState = statusMap[data.status];
     if (newState) {
       setTripState(newState);
+      if (currentTrip) {
+        setCurrentTrip({
+          ...currentTrip,
+          status: data.status,
+          ...(data.status === "ACCEPTED" ? { dispatchStatus: null } : {}),
+        });
+      }
       
       // Navigate to feedback after completion
       if (newState === "COMPLETED" && currentTrip?.id) {
@@ -227,12 +239,8 @@ export default function TripTrackingScreen() {
   const handleRetrySearch = () => {
     setTripState("SEARCHING");
     if (currentTrip?.id) {
+      setCurrentTrip({ ...currentTrip, dispatchStatus: "SEARCHING" });
       socketService.dispatchTrip(currentTrip.id);
-      searchTimerRef.current = setTimeout(() => {
-        if (tripState === "SEARCHING") {
-          setTripState("NO_DRIVER_FOUND");
-        }
-      }, searchTimeout * 1000);
     }
   };
 
@@ -271,7 +279,7 @@ export default function TripTrackingScreen() {
             </Animated.View>
             <Text style={styles.statusTitle}>Searching for drivers...</Text>
             <Text style={styles.statusDescription}>
-              This usually takes less than {searchTimeout} seconds
+              We are contacting nearby drivers. Please wait.
             </Text>
             <ActivityIndicator size="large" color={theme.primary} style={styles.loader} />
             <TouchableOpacity style={styles.cancelButton} onPress={handleCancelTrip}>
@@ -286,7 +294,24 @@ export default function TripTrackingScreen() {
             <Text style={styles.errorIcon}>😔</Text>
             <Text style={styles.statusTitle}>No drivers available</Text>
             <Text style={styles.statusDescription}>
-              All drivers are currently busy. Please try again in a few minutes.
+              No nearby driver accepted your trip. Please try again.
+            </Text>
+            <TouchableOpacity style={styles.primaryButton} onPress={handleRetrySearch}>
+              <Text style={styles.primaryButtonText}>Try Again</Text>
+            </TouchableOpacity>
+            <TouchableOpacity style={styles.secondaryButton} onPress={handleGoHome}>
+              <Text style={styles.secondaryButtonText}>Cancel & Go Home</Text>
+            </TouchableOpacity>
+          </View>
+        );
+
+      case "FAILED":
+        return (
+          <View style={styles.centerContent}>
+            <Text style={styles.errorIcon}>⚠️</Text>
+            <Text style={styles.statusTitle}>We couldn't dispatch your trip</Text>
+            <Text style={styles.statusDescription}>
+              Something went wrong while contacting drivers. Please try again.
             </Text>
             <TouchableOpacity style={styles.primaryButton} onPress={handleRetrySearch}>
               <Text style={styles.primaryButtonText}>Try Again</Text>
