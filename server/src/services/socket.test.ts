@@ -106,6 +106,7 @@ describe("dispatchTrip", () => {
       status: "NO_DRIVERS",
       message: "No drivers available nearby. Please try again in a few minutes.",
     });
+
     expect(mocks.tripUpdateMany).toHaveBeenNthCalledWith(1, {
       where: { id: "trip-1", status: "REQUESTED", driverId: null },
       data: { dispatchStatus: "SEARCHING" },
@@ -114,6 +115,66 @@ describe("dispatchTrip", () => {
       where: { id: "trip-1", status: "REQUESTED", driverId: null },
       data: { dispatchStatus: "NO_DRIVER_FOUND" },
     });
+  });
+
+  it("coalesces concurrent dispatches for the same trip", async () => {
+    let resolveDiscovery!: (drivers: never[]) => void;
+    mocks.findNearbyDrivers.mockReturnValue(
+      new Promise((resolve) => {
+        resolveDiscovery = resolve;
+      })
+    );
+
+    const firstDispatch = dispatchTrip("trip-1");
+    for (let attempt = 0; attempt < 20 && !mocks.findNearbyDrivers.mock.calls.length; attempt += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    }
+    const secondDispatch = dispatchTrip("trip-1");
+    resolveDiscovery([]);
+
+    const results = await Promise.all([firstDispatch, secondDispatch]);
+
+    expect(results[0]).toEqual({
+      status: "NO_DRIVERS",
+      message: "No drivers available nearby. Please try again in a few minutes.",
+    });
+    expect(results[1]).toEqual(results[0]);
+    expect(mocks.getTripById).toHaveBeenCalledTimes(1);
+    expect(mocks.tripUpdateMany).toHaveBeenCalledTimes(2);
+    expect(mocks.findNearbyDrivers).toHaveBeenCalledTimes(1);
+  });
+
+  it("cleans up the guard after NO_DRIVERS so retry starts a new dispatch", async () => {
+    mocks.findNearbyDrivers.mockResolvedValue([]);
+
+    await dispatchTrip("trip-1");
+    await dispatchTrip("trip-1");
+
+    expect(mocks.getTripById).toHaveBeenCalledTimes(2);
+    expect(mocks.findNearbyDrivers).toHaveBeenCalledTimes(2);
+  });
+
+  it("cleans up the guard after FAILED so retry starts a new dispatch", async () => {
+    mocks.findNearbyDrivers.mockRejectedValueOnce(new Error("redis unavailable"));
+    mocks.findNearbyDrivers.mockResolvedValueOnce([]);
+
+    await expect(dispatchTrip("trip-1")).resolves.toEqual({
+      status: "FAILED",
+      reason: "Server error",
+    });
+    await expect(dispatchTrip("trip-1")).resolves.toMatchObject({ status: "NO_DRIVERS" });
+
+    expect(mocks.getTripById).toHaveBeenCalledTimes(2);
+    expect(mocks.findNearbyDrivers).toHaveBeenCalledTimes(2);
+  });
+
+  it("allows different trips to dispatch independently", async () => {
+    mocks.findNearbyDrivers.mockResolvedValue([]);
+
+    await Promise.all([dispatchTrip("trip-1"), dispatchTrip("trip-2")]);
+
+    expect(mocks.getTripById).toHaveBeenCalledTimes(2);
+    expect(mocks.findNearbyDrivers).toHaveBeenCalledTimes(2);
   });
 
   it("sets SEARCHING when dispatch begins", async () => {
