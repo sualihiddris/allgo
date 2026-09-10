@@ -79,6 +79,8 @@ const pendingResponses = new Map<
   { driverId: string; resolve: (response: "accept" | "decline") => void }
 >();
 
+const inFlightDispatches = new Map<string, Promise<DispatchTripResult>>();
+
 export async function setupSocketIO(httpServer: HTTPServer): Promise<Server> {
   const io = new Server(httpServer, {
     cors: {
@@ -308,7 +310,30 @@ export async function setupSocketIO(httpServer: HTTPServer): Promise<Server> {
   return io;
 }
 
-export async function dispatchTrip(tripId: string): Promise<DispatchTripResult> {
+export function dispatchTrip(tripId: string): Promise<DispatchTripResult> {
+  const existingDispatch = inFlightDispatches.get(tripId);
+  if (existingDispatch) {
+    return existingDispatch;
+  }
+
+  const currentDispatch = dispatchTripInternal(tripId);
+  inFlightDispatches.set(tripId, currentDispatch);
+  void currentDispatch.then(
+    () => {
+      if (inFlightDispatches.get(tripId) === currentDispatch) {
+        inFlightDispatches.delete(tripId);
+      }
+    },
+    () => {
+      if (inFlightDispatches.get(tripId) === currentDispatch) {
+        inFlightDispatches.delete(tripId);
+      }
+    }
+  );
+  return currentDispatch;
+}
+
+async function dispatchTripInternal(tripId: string): Promise<DispatchTripResult> {
   try {
     const io = getIO();
     const trip = await getTripById(tripId);
