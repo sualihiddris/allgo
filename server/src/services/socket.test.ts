@@ -108,12 +108,43 @@ describe("dispatchTrip", () => {
     });
 
     expect(mocks.tripUpdateMany).toHaveBeenNthCalledWith(1, {
-      where: { id: "trip-1", status: "REQUESTED", driverId: null },
-      data: { dispatchStatus: "SEARCHING" },
+      where: {
+        id: "trip-1",
+        status: "REQUESTED",
+        driverId: null,
+        OR: [
+          { dispatchStatus: null },
+          { dispatchStatus: "NO_DRIVER_FOUND" },
+          { dispatchStatus: "FAILED" },
+          {
+            dispatchStatus: "SEARCHING",
+            OR: [
+              { dispatchClaimToken: null },
+              { dispatchClaimedAt: null },
+              { dispatchClaimedAt: { lt: expect.any(Date) } },
+            ],
+          },
+        ],
+      },
+      data: {
+        dispatchStatus: "SEARCHING",
+        dispatchClaimToken: expect.any(String),
+        dispatchClaimedAt: expect.any(Date),
+      },
     });
     expect(mocks.tripUpdateMany).toHaveBeenNthCalledWith(2, {
-      where: { id: "trip-1", status: "REQUESTED", driverId: null },
-      data: { dispatchStatus: "NO_DRIVER_FOUND" },
+      where: {
+        id: "trip-1",
+        status: "REQUESTED",
+        driverId: null,
+        dispatchStatus: "SEARCHING",
+        dispatchClaimToken: expect.any(String),
+      },
+      data: {
+        dispatchStatus: "NO_DRIVER_FOUND",
+        dispatchClaimToken: null,
+        dispatchClaimedAt: null,
+      },
     });
   });
 
@@ -183,22 +214,153 @@ describe("dispatchTrip", () => {
     await dispatchTrip("trip-1");
 
     expect(mocks.tripUpdateMany).toHaveBeenCalledWith({
-      where: { id: "trip-1", status: "REQUESTED", driverId: null },
-      data: { dispatchStatus: "SEARCHING" },
+      where: {
+        id: "trip-1",
+        status: "REQUESTED",
+        driverId: null,
+        OR: [
+          { dispatchStatus: null },
+          { dispatchStatus: "NO_DRIVER_FOUND" },
+          { dispatchStatus: "FAILED" },
+          {
+            dispatchStatus: "SEARCHING",
+            OR: [
+              { dispatchClaimToken: null },
+              { dispatchClaimedAt: null },
+              { dispatchClaimedAt: { lt: expect.any(Date) } },
+            ],
+          },
+        ],
+      },
+      data: {
+        dispatchStatus: "SEARCHING",
+        dispatchClaimToken: expect.any(String),
+        dispatchClaimedAt: expect.any(Date),
+      },
     });
   });
 
-  it("stops before offering when the lifecycle-safe SEARCHING claim loses the race", async () => {
+  it("builds the atomic claim filter to reclaim expired SEARCHING leases", async () => {
+    mocks.findNearbyDrivers.mockResolvedValue([]);
+
+    await dispatchTrip("trip-1");
+
+    const claimCall = mocks.tripUpdateMany.mock.calls[0][0];
+    const searchingBranch = claimCall.where.OR.find(
+      (branch: any) => branch.dispatchStatus === "SEARCHING"
+    );
+    const staleCondition = searchingBranch?.OR.find(
+      (condition: any) =>
+        condition.dispatchClaimedAt?.lt instanceof Date
+    );
+
+    expect(searchingBranch).toEqual(
+      expect.objectContaining({
+        dispatchStatus: "SEARCHING",
+      })
+    );
+    expect(staleCondition?.dispatchClaimedAt.lt).toBeInstanceOf(Date);
+    expect(claimCall.data.dispatchClaimToken).toEqual(expect.any(String));
+    expect(claimCall.data.dispatchClaimedAt).toBeInstanceOf(Date);
+
+    expect(
+      claimCall.data.dispatchClaimedAt.getTime() -
+        staleCondition.dispatchClaimedAt.lt.getTime()
+    ).toBe(5 * 60 * 1000);
+  });
+
+  it("returns FAILED when a lost claim reflects lifecycle progress", async () => {
+    const requestedTrip = await mocks.getTripById("trip-1");
+    mocks.getTripById.mockClear();
+
+    mocks.getTripById
+      .mockResolvedValueOnce(requestedTrip)
+      .mockResolvedValueOnce({
+        ...requestedTrip,
+        status: "ACCEPTED",
+        driverId: "driver-1",
+        dispatchStatus: null,
+      });
+
     mocks.tripUpdateMany.mockResolvedValueOnce({ count: 0 });
 
     await expect(dispatchTrip("trip-1")).resolves.toEqual({
       status: "FAILED",
-      reason: "Invalid trip",
+      reason: "Trip is no longer available for dispatch",
     });
+
     expect(mocks.findNearbyDrivers).not.toHaveBeenCalled();
+  });
+
+  it("does not report NO_DRIVERS when terminal persistence loses to lifecycle progress", async () => {
+    const requestedTrip = await mocks.getTripById("trip-1");
+    mocks.getTripById.mockClear();
+
+    mocks.getTripById
+      .mockResolvedValueOnce(requestedTrip)
+      .mockResolvedValueOnce({
+        ...requestedTrip,
+        status: "CANCELLED",
+        driverId: null,
+        dispatchStatus: null,
+      });
+
+    mocks.findNearbyDrivers.mockResolvedValue([]);
+    mocks.tripUpdateMany
+      .mockResolvedValueOnce({ count: 1 })
+      .mockResolvedValueOnce({ count: 0 });
+
+    await expect(dispatchTrip("trip-1")).resolves.toEqual({
+      status: "FAILED",
+      reason: "Trip is no longer available for dispatch",
+    });
+  });
+
+  it("returns IN_PROGRESS without offering when another instance already owns SEARCHING", async () => {
+    mocks.getTripById
+      .mockResolvedValueOnce({
+        id: "trip-1",
+        status: "REQUESTED",
+      })
+      .mockResolvedValueOnce({
+        id: "trip-1",
+        status: "REQUESTED",
+        driverId: null,
+        dispatchStatus: "SEARCHING",
+      });
+    mocks.tripUpdateMany.mockResolvedValueOnce({ count: 0 });
+
+    await expect(dispatchTrip("trip-1")).resolves.toEqual({
+      status: "IN_PROGRESS",
+      reason: "Trip dispatch is already in progress",
+    });
+
+    expect(mocks.findNearbyDrivers).not.toHaveBeenCalled();
+    expect(mocks.tripUpdateMany).toHaveBeenCalledTimes(1);
     expect(mocks.tripUpdateMany).toHaveBeenCalledWith({
-      where: { id: "trip-1", status: "REQUESTED", driverId: null },
-      data: { dispatchStatus: "SEARCHING" },
+      where: {
+        id: "trip-1",
+        status: "REQUESTED",
+        driverId: null,
+        OR: [
+          { dispatchStatus: null },
+          { dispatchStatus: "NO_DRIVER_FOUND" },
+          { dispatchStatus: "FAILED" },
+          {
+            dispatchStatus: "SEARCHING",
+            OR: [
+              { dispatchClaimToken: null },
+              { dispatchClaimedAt: null },
+              { dispatchClaimedAt: { lt: expect.any(Date) } },
+            ],
+          },
+        ],
+      },
+      data: {
+        dispatchStatus: "SEARCHING",
+        dispatchClaimToken: expect.any(String),
+        dispatchClaimedAt: expect.any(Date),
+      },
     });
   });
 
@@ -210,8 +372,18 @@ describe("dispatchTrip", () => {
       reason: "Server error",
     });
     expect(mocks.tripUpdateMany).toHaveBeenLastCalledWith({
-      where: { id: "trip-1", status: "REQUESTED", driverId: null },
-      data: { dispatchStatus: "FAILED" },
+      where: {
+        id: "trip-1",
+        status: "REQUESTED",
+        driverId: null,
+        dispatchStatus: "SEARCHING",
+        dispatchClaimToken: expect.any(String),
+      },
+      data: {
+        dispatchStatus: "FAILED",
+        dispatchClaimToken: null,
+        dispatchClaimedAt: null,
+      },
     });
   });
 
@@ -264,10 +436,39 @@ describe("dispatchTrip", () => {
     handlers["trip:accept"]("trip-1");
 
     await expect(dispatchPromise).resolves.toMatchObject({ status: "ACCEPTED" });
-    expect(mocks.assignTripToDriver).toHaveBeenCalledWith("trip-1", "driver-1");
+    const claimToken =
+      mocks.tripUpdateMany.mock.calls[0][0].data.dispatchClaimToken;
+
+    expect(claimToken).toEqual(expect.any(String));
+    expect(mocks.assignTripToDriver).toHaveBeenCalledWith(
+      "trip-1",
+      "driver-1",
+      claimToken
+    );
     expect(mocks.tripUpdateMany).toHaveBeenCalledWith({
-      where: { id: "trip-1", status: "REQUESTED", driverId: null },
-      data: { dispatchStatus: "SEARCHING" },
+      where: {
+        id: "trip-1",
+        status: "REQUESTED",
+        driverId: null,
+        OR: [
+          { dispatchStatus: null },
+          { dispatchStatus: "NO_DRIVER_FOUND" },
+          { dispatchStatus: "FAILED" },
+          {
+            dispatchStatus: "SEARCHING",
+            OR: [
+              { dispatchClaimToken: null },
+              { dispatchClaimedAt: null },
+              { dispatchClaimedAt: { lt: expect.any(Date) } },
+            ],
+          },
+        ],
+      },
+      data: {
+        dispatchStatus: "SEARCHING",
+        dispatchClaimToken: expect.any(String),
+        dispatchClaimedAt: expect.any(Date),
+      },
     });
     expect(mocks.registerActiveTrip).toHaveBeenCalledWith("driver-1", "trip-1");
     expect(ioMock.emissions).toContainEqual({
@@ -288,9 +489,19 @@ describe("dispatchTrip", () => {
         user: { name: "Driver", phone: "0200000000" },
       },
     });
-    mocks.registerActiveTrip.mockRejectedValue(new Error("tracking unavailable"));
+    mocks.registerActiveTrip.mockRejectedValue(
+      new Error("tracking unavailable")
+    );
+
+    // Claim succeeds, heartbeat succeeds, then FAILED persistence loses
+    // because assignment has already moved the trip to ACCEPTED.
+    mocks.tripUpdateMany
+      .mockResolvedValueOnce({ count: 1 })
+      .mockResolvedValueOnce({ count: 1 })
+      .mockResolvedValueOnce({ count: 0 });
 
     const handlers: Record<string, (tripId: string) => void> = {};
+
     ioMock.getConnectionHandler()!({
       role: "DRIVER",
       driverId: "driver-1",
@@ -303,19 +514,50 @@ describe("dispatchTrip", () => {
     });
 
     const dispatchPromise = dispatchTrip("trip-1");
-    for (let attempt = 0; attempt < 20 && ioMock.emissions.length === 0; attempt += 1) {
+
+    for (
+      let attempt = 0;
+      attempt < 20 && ioMock.emissions.length === 0;
+      attempt += 1
+    ) {
       await new Promise((resolve) => setTimeout(resolve, 0));
     }
+
+    // Assignment has now logically succeeded. Any re-read performed by
+    // the exception handler must see the real lifecycle state.
+    mocks.getTripById.mockResolvedValue({
+      id: "trip-1",
+      status: "ACCEPTED",
+      driverId: "driver-1",
+      dispatchStatus: null,
+    });
+
     handlers["trip:accept"]("trip-1");
 
     await expect(dispatchPromise).resolves.toEqual({
       status: "FAILED",
       reason: "Server error",
     });
+
+    const claimToken =
+      mocks.tripUpdateMany.mock.calls[0][0].data.dispatchClaimToken;
+
     expect(mocks.tripUpdateMany).toHaveBeenLastCalledWith({
-      where: { id: "trip-1", status: "REQUESTED", driverId: null },
-      data: { dispatchStatus: "FAILED" },
+      where: {
+        id: "trip-1",
+        status: "REQUESTED",
+        driverId: null,
+        dispatchStatus: "SEARCHING",
+        dispatchClaimToken: claimToken,
+      },
+      data: {
+        dispatchStatus: "FAILED",
+        dispatchClaimToken: null,
+        dispatchClaimedAt: null,
+      },
     });
+
+    expect(mocks.getTripById).toHaveBeenCalledTimes(2);
   });
 
   it("persists NO_DRIVER_FOUND safely for a night-restricted vehicle", async () => {
@@ -327,9 +569,95 @@ describe("dispatchTrip", () => {
     });
     expect(mocks.findNearbyDrivers).not.toHaveBeenCalled();
     expect(mocks.tripUpdateMany).toHaveBeenNthCalledWith(2, {
-      where: { id: "trip-1", status: "REQUESTED", driverId: null },
-      data: { dispatchStatus: "NO_DRIVER_FOUND" },
+      where: {
+        id: "trip-1",
+        status: "REQUESTED",
+        driverId: null,
+        dispatchStatus: "SEARCHING",
+        dispatchClaimToken: expect.any(String),
+      },
+      data: {
+        dispatchStatus: "NO_DRIVER_FOUND",
+        dispatchClaimToken: null,
+        dispatchClaimedAt: null,
+      },
     });
+  });
+
+  it("does not emit a false terminal event when another instance already owns dispatch", async () => {
+    mocks.getTripById
+      .mockResolvedValueOnce({
+        id: "trip-1",
+        status: "REQUESTED",
+      })
+      .mockResolvedValueOnce({
+        id: "trip-1",
+        status: "REQUESTED",
+        driverId: null,
+        dispatchStatus: "SEARCHING",
+      });
+    mocks.tripUpdateMany.mockResolvedValueOnce({ count: 0 });
+
+    const handlers: Record<string, (tripId: string) => Promise<void>> = {};
+    const customerSocket = {
+      role: "CUSTOMER",
+      userId: "customer-1",
+      join: vi.fn(),
+      emit: vi.fn(),
+      on: (event: string, handler: (tripId: string) => Promise<void>) => {
+        handlers[event] = handler;
+      },
+    };
+    ioMock.getConnectionHandler()!(customerSocket);
+
+    await handlers["trip:dispatch"]("trip-1");
+
+    expect(customerSocket.emit).not.toHaveBeenCalledWith(
+      "trip:dispatch:failed",
+      expect.anything()
+    );
+    expect(customerSocket.emit).not.toHaveBeenCalledWith(
+      "trip:dispatch:no_drivers",
+      expect.anything()
+    );
+    expect(customerSocket.emit).not.toHaveBeenCalledWith(
+      "trip:accepted",
+      expect.anything()
+    );
+    expect(mocks.findNearbyDrivers).not.toHaveBeenCalled();
+  });
+
+  it("stops before offering when the dispatch heartbeat loses ownership", async () => {
+    mocks.findNearbyDrivers.mockResolvedValue([{ driverId: "driver-1" }]);
+    mocks.tripUpdateMany
+      .mockResolvedValueOnce({ count: 1 })
+      .mockResolvedValueOnce({ count: 0 });
+
+    await expect(dispatchTrip("trip-1")).resolves.toEqual({
+      status: "IN_PROGRESS",
+      reason: "Trip dispatch ownership changed",
+    });
+
+    expect(
+      ioMock.emissions.some((emission) => emission.event === "trip:offer")
+    ).toBe(false);
+    expect(mocks.assignTripToDriver).not.toHaveBeenCalled();
+
+    expect(mocks.tripUpdateMany).toHaveBeenNthCalledWith(
+      2,
+      expect.objectContaining({
+        where: expect.objectContaining({
+          id: "trip-1",
+          status: "REQUESTED",
+          driverId: null,
+          dispatchStatus: "SEARCHING",
+          dispatchClaimToken: expect.any(String),
+        }),
+        data: {
+          dispatchClaimedAt: expect.any(Date),
+        },
+      })
+    );
   });
 
   it("maps NO_DRIVERS to the customer dispatch event", async () => {

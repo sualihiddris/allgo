@@ -340,17 +340,25 @@ export async function findDriverWithExpansion(
 /**
  * Assign trip to driver
  */
-export async function assignTripToDriver(tripId: string, driverId: string) {
+export async function assignTripToDriver(
+  tripId: string,
+  driverId: string,
+  dispatchClaimToken: string
+) {
   const claim = await prisma.trip.updateMany({
     where: {
       id: tripId,
       status: "REQUESTED",
       driverId: null,
+      dispatchStatus: "SEARCHING",
+      dispatchClaimToken,
     },
     data: {
       driverId,
       status: "ACCEPTED",
       dispatchStatus: null,
+      dispatchClaimToken: null,
+      dispatchClaimedAt: null,
       acceptedAt: new Date(),
     },
   });

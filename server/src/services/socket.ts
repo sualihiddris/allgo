@@ -5,6 +5,7 @@
  */
 
 import { Server as HTTPServer } from "http";
+import { randomUUID } from "crypto";
 import { Server, Socket } from "socket.io";
 import { createAdapter } from "@socket.io/redis-adapter";
 import Redis from "ioredis";
@@ -42,6 +43,8 @@ interface AuthenticatedSocket extends Socket {
 
 let ioInstance: Server | null = null;
 
+const DISPATCH_CLAIM_LEASE_MS = 5 * 60 * 1000;
+
 export type DispatchTripResult =
   | {
       status: "ACCEPTED";
@@ -54,6 +57,7 @@ export type DispatchTripResult =
       };
     }
   | { status: "NO_DRIVERS"; message: string }
+  | { status: "IN_PROGRESS"; reason: string }
   | { status: "FAILED"; reason: string };
 
 // REST routes (e.g. tracking.ts) need to push events to a customer's room
@@ -225,7 +229,7 @@ export async function setupSocketIO(httpServer: HTTPServer): Promise<Server> {
         socket.emit("trip:accepted", { tripId, driver: result.driver });
       } else if (result.status === "NO_DRIVERS") {
         socket.emit("trip:dispatch:no_drivers", { tripId, message: result.message });
-      } else {
+      } else if (result.status === "FAILED") {
         socket.emit("trip:dispatch:failed", { tripId, reason: result.reason });
       }
     });
@@ -333,7 +337,40 @@ export function dispatchTrip(tripId: string): Promise<DispatchTripResult> {
   return currentDispatch;
 }
 
+async function resolveDispatchOwnershipLoss(
+  tripId: string,
+  inProgressReason: string,
+  failedReason: string
+): Promise<DispatchTripResult> {
+  try {
+    const currentTrip = await getTripById(tripId);
+
+    if (
+      currentTrip?.status === "REQUESTED" &&
+      currentTrip.driverId === null &&
+      currentTrip.dispatchStatus === "SEARCHING"
+    ) {
+      return {
+        status: "IN_PROGRESS",
+        reason: inProgressReason,
+      };
+    }
+  } catch (error) {
+    console.error(
+      `[Dispatch] Failed to re-read trip ${tripId} after ownership loss:`,
+      error
+    );
+  }
+
+  return {
+    status: "FAILED",
+    reason: failedReason,
+  };
+}
+
 async function dispatchTripInternal(tripId: string): Promise<DispatchTripResult> {
+  let dispatchClaimToken: string | null = null;
+
   try {
     const io = getIO();
     const trip = await getTripById(tripId);
@@ -342,24 +379,83 @@ async function dispatchTripInternal(tripId: string): Promise<DispatchTripResult>
       return { status: "FAILED", reason: "Invalid trip" };
     }
 
+    const claimToken = randomUUID();
+    const claimedAt = new Date();
+    const staleBefore = new Date(
+      claimedAt.getTime() - DISPATCH_CLAIM_LEASE_MS
+    );
+
     const dispatchClaim = await prisma.trip.updateMany({
-      where: { id: tripId, status: "REQUESTED", driverId: null },
-      data: { dispatchStatus: "SEARCHING" },
+      where: {
+        id: tripId,
+        status: "REQUESTED",
+        driverId: null,
+        OR: [
+          { dispatchStatus: null },
+          { dispatchStatus: "NO_DRIVER_FOUND" },
+          { dispatchStatus: "FAILED" },
+          {
+            dispatchStatus: "SEARCHING",
+            OR: [
+              { dispatchClaimToken: null },
+              { dispatchClaimedAt: null },
+              { dispatchClaimedAt: { lt: staleBefore } },
+            ],
+          },
+        ],
+      },
+      data: {
+        dispatchStatus: "SEARCHING",
+        dispatchClaimToken: claimToken,
+        dispatchClaimedAt: claimedAt,
+      },
     });
+
     if (dispatchClaim.count === 0) {
-      return { status: "FAILED", reason: "Invalid trip" };
+      return resolveDispatchOwnershipLoss(
+        tripId,
+        "Trip dispatch is already in progress",
+        "Trip is no longer available for dispatch"
+      );
     }
 
-    const isNight = isNightServiceHours();
-    if (isNight && !isVehicleAllowedAtNight(trip.vehicleType)) {
-      await prisma.trip.updateMany({
-        where: { id: tripId, status: "REQUESTED", driverId: null },
-        data: { dispatchStatus: "NO_DRIVER_FOUND" },
+    dispatchClaimToken = claimToken;
+
+    const persistNoDrivers = async (
+      message: string
+    ): Promise<DispatchTripResult> => {
+      const noDriverPersist = await prisma.trip.updateMany({
+        where: {
+          id: tripId,
+          status: "REQUESTED",
+          driverId: null,
+          dispatchStatus: "SEARCHING",
+          dispatchClaimToken: claimToken,
+        },
+        data: {
+          dispatchStatus: "NO_DRIVER_FOUND",
+          dispatchClaimToken: null,
+          dispatchClaimedAt: null,
+        },
       });
-      return {
-        status: "NO_DRIVERS",
-        message: `${trip.vehicleType} service is not available during night hours (9pm-5am). Please try MOTO or KEKE.`,
-      };
+
+      if (noDriverPersist.count === 0) {
+        return resolveDispatchOwnershipLoss(
+          tripId,
+          "Trip dispatch ownership changed",
+          "Trip is no longer available for dispatch"
+        );
+      }
+
+      return { status: "NO_DRIVERS", message };
+    };
+
+    const isNight = isNightServiceHours();
+
+    if (isNight && !isVehicleAllowedAtNight(trip.vehicleType)) {
+      return persistNoDrivers(
+        `${trip.vehicleType} service is not available during night hours (9pm-5am). Please try MOTO or KEKE.`
+      );
     }
 
     const jobTimeoutSeconds = getJobTimeout();
@@ -381,7 +477,33 @@ async function dispatchTripInternal(tripId: string): Promise<DispatchTripResult>
         const available = await isDriverAvailable(candidate.driverId);
         if (!available) continue;
 
-        console.log(`[Dispatch] Trip ${tripId}: offering to driver ${candidate.driverId} (radius ${radius}m)`);
+        // Heartbeat immediately before an externally-visible offer.
+        // If another process reclaimed the lease while this dispatcher was
+        // paused, the token mismatch stops the stale owner here.
+        const heartbeat = await prisma.trip.updateMany({
+          where: {
+            id: tripId,
+            status: "REQUESTED",
+            driverId: null,
+            dispatchStatus: "SEARCHING",
+            dispatchClaimToken: claimToken,
+          },
+          data: {
+            dispatchClaimedAt: new Date(),
+          },
+        });
+
+        if (heartbeat.count === 0) {
+          return {
+            status: "IN_PROGRESS",
+            reason: "Trip dispatch ownership changed",
+          };
+        }
+
+        console.log(
+          `[Dispatch] Trip ${tripId}: offering to driver ${candidate.driverId} (radius ${radius}m)`
+        );
+
         io.to(`driver:${candidate.driverId}`).emit("trip:offer", {
           tripId: trip.id,
           vehicleType: trip.vehicleType,
@@ -399,15 +521,25 @@ async function dispatchTripInternal(tripId: string): Promise<DispatchTripResult>
             address: trip.destAddress,
           },
           distance: trip.distanceMeters,
-          customerName: trip.customer?.user?.name || trip.callerName || "Customer",
-          customerPhone: trip.customer?.user?.phone || trip.callerPhone || "",
+          customerName:
+            trip.customer?.user?.name || trip.callerName || "Customer",
+          customerPhone:
+            trip.customer?.user?.phone || trip.callerPhone || "",
           customerNote: trip.customerNote,
           timeoutSeconds: jobTimeoutSeconds,
         });
 
-        const responsePromise = waitForDriverResponse(candidate.driverId, tripId, jobTimeoutSeconds);
+        const responsePromise = waitForDriverResponse(
+          candidate.driverId,
+          tripId,
+          jobTimeoutSeconds
+        );
+
         prisma.driver
-          .findUnique({ where: { id: candidate.driverId }, select: { pushToken: true } })
+          .findUnique({
+            where: { id: candidate.driverId },
+            select: { pushToken: true },
+          })
           .then((candidateDriver) => {
             if (candidateDriver?.pushToken) {
               return sendPushNotification(
@@ -418,15 +550,29 @@ async function dispatchTripInternal(tripId: string): Promise<DispatchTripResult>
               );
             }
           })
-          .catch((error) => console.error("[Push] Failed to send job offer push:", error));
+          .catch((error) =>
+            console.error("[Push] Failed to send job offer push:", error)
+          );
 
         const response = await responsePromise;
-        console.log(`[Dispatch] Trip ${tripId}: driver ${candidate.driverId} responded "${response}"`);
+
+        console.log(
+          `[Dispatch] Trip ${tripId}: driver ${candidate.driverId} responded "${response}"`
+        );
 
         if (response === "accept") {
-          const updatedTrip = await assignTripToDriver(tripId, candidate.driverId);
+          const updatedTrip = await assignTripToDriver(
+            tripId,
+            candidate.driverId,
+            claimToken
+          );
+
           await registerActiveTrip(candidate.driverId, tripId);
-          io.to(`driver:${candidate.driverId}`).emit("trip:confirmed", { tripId });
+
+          io.to(`driver:${candidate.driverId}`).emit("trip:confirmed", {
+            tripId,
+          });
+
           return {
             status: "ACCEPTED",
             driver: {
@@ -444,21 +590,43 @@ async function dispatchTripInternal(tripId: string): Promise<DispatchTripResult>
     const message = isNight
       ? "No night service drivers available right now. Please try again in a few minutes."
       : "No drivers available nearby. Please try again in a few minutes.";
-    await prisma.trip.updateMany({
-      where: { id: tripId, status: "REQUESTED", driverId: null },
-      data: { dispatchStatus: "NO_DRIVER_FOUND" },
-    });
-    return { status: "NO_DRIVERS", message };
+
+    return persistNoDrivers(message);
   } catch (error) {
     console.error("Error dispatching trip:", error);
-    try {
-      await prisma.trip.updateMany({
-        where: { id: tripId, status: "REQUESTED", driverId: null },
-        data: { dispatchStatus: "FAILED" },
-      });
-    } catch (persistError) {
-      console.error("Error persisting failed dispatch status:", persistError);
+
+    if (dispatchClaimToken) {
+      try {
+        const failedPersist = await prisma.trip.updateMany({
+          where: {
+            id: tripId,
+            status: "REQUESTED",
+            driverId: null,
+            dispatchStatus: "SEARCHING",
+            dispatchClaimToken,
+          },
+          data: {
+            dispatchStatus: "FAILED",
+            dispatchClaimToken: null,
+            dispatchClaimedAt: null,
+          },
+        });
+
+        if (failedPersist.count === 0) {
+          return resolveDispatchOwnershipLoss(
+            tripId,
+            "Trip dispatch ownership changed",
+            "Server error"
+          );
+        }
+      } catch (persistError) {
+        console.error(
+          "Error persisting failed dispatch status:",
+          persistError
+        );
+      }
     }
+
     return { status: "FAILED", reason: "Server error" };
   }
 }
