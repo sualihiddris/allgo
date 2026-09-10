@@ -1,6 +1,10 @@
 import { MapsProvider, GeoPoint, RouteResponse, GeocodeResponse, PlaceSuggestion, PlaceDetails } from "./types";
 
 export class MockMapsProvider implements MapsProvider {
+  // Tarkwa, Ghana town centre - the pilot operating area. All mock
+  // development geocoding defaults must resolve here, never Accra.
+  private static readonly TARKWA: GeoPoint = { lat: 5.298625, lng: -2.001296 };
+
   async getRoute(origin: GeoPoint, destination: GeoPoint): Promise<RouteResponse> {
     const distance = this.calculateDistance(origin, destination);
     const duration = Math.ceil(distance / 15);
@@ -18,7 +22,7 @@ export class MockMapsProvider implements MapsProvider {
     return { location, address: `${location.lat.toFixed(6)}, ${location.lng.toFixed(6)}` };
   }
   async geocode(address: string): Promise<GeocodeResponse> {
-    return { location: { lat: 5.6037, lng: -0.1870 }, address };
+    return { location: { ...MockMapsProvider.TARKWA }, address };
   }
   async autocompletePlaces(input: string): Promise<PlaceSuggestion[]> {
     const text = `${input.trim()}, Ghana`;
@@ -29,7 +33,7 @@ export class MockMapsProvider implements MapsProvider {
     return {
       placeId,
       address: `${text}, Ghana`,
-      location: { lat: 5.298625, lng: -2.001296 },
+      location: { ...MockMapsProvider.TARKWA },
     };
   }
   private calculateDistance(from: GeoPoint, to: GeoPoint): number {
