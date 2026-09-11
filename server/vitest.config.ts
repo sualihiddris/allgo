@@ -18,7 +18,11 @@ export default defineConfig({
       ],
     },
     include: ['src/**/*.{test,spec}.{ts,tsx}'],
-    exclude: ['node_modules', 'dist'],
+    exclude: [
+      'node_modules',
+      'dist',
+      'src/e2e/**',
+    ],
   },
   resolve: {
     alias: {
