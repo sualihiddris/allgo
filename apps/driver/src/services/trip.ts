@@ -4,7 +4,7 @@ import { driverAuthService } from "./auth";
 export const tripService = {
   async updateTripStatus(
     tripId: string,
-    status: "ARRIVED" | "STARTED" | "COMPLETED",
+    status: "STARTED" | "COMPLETED",
     location?: { lat: number; lng: number }
   ) {
     const token = driverAuthService.getAccessToken();

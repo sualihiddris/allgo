@@ -17,7 +17,7 @@ import { unregisterActiveTrip } from "../services/tracking";
 const router = Router();
 
 const statusUpdateSchema = z.object({
-  status: z.enum(["ARRIVED", "STARTED", "COMPLETED", "CANCELLED"]),
+  status: z.enum(["STARTED", "COMPLETED", "CANCELLED"]),
   location: z
     .object({
       lat: z.number(),
@@ -111,7 +111,7 @@ router.get(
 
 /**
  * PUT /api/v1/tracking/trip/:id/status
- * Driver updates trip status (ARRIVED → STARTED → COMPLETED)
+ * Driver updates trip status (STARTED → COMPLETED)
  */
 router.put(
   "/trip/:id/status",
