@@ -16,7 +16,14 @@ const mocks = vi.hoisted(() => ({
   tripUpdateMany: vi.fn(),
 }));
 
-vi.mock("../config", () => ({ env: { NODE_ENV: "test" } }));
+const config = vi.hoisted(() => ({
+  env: {
+    NODE_ENV: "test",
+    REDIS_URL: undefined as string | undefined,
+  },
+}));
+
+vi.mock("../config", () => config);
 vi.mock("../config/database", () => ({
   prisma: {
     driver: { findUnique: mocks.driverFindUnique },
@@ -47,21 +54,44 @@ vi.mock("@socket.io/redis-adapter", () => ({ createAdapter: vi.fn() }));
 
 const ioMock = vi.hoisted(() => {
   const emissions: Array<{ room: string; event: string; payload: unknown }> = [];
+  const serverSideEmissions: Array<{ event: string; payload: unknown }> = [];
+  const serverSideHandlers: Record<string, (payload: any) => void> = {};
   let connectionHandler: ((socket: any) => void) | undefined;
+
   class FakeServer {
     use() {}
-    on(event: string, handler: (socket: any) => void) {
-      if (event === "connection") connectionHandler = handler;
+
+    on(event: string, handler: (payload: any) => void) {
+      if (event === "connection") {
+        connectionHandler = handler;
+      } else {
+        serverSideHandlers[event] = handler;
+      }
     }
+
     adapter() {}
+
+    serverSideEmit(event: string, payload: unknown) {
+      serverSideEmissions.push({ event, payload });
+    }
+
     to(room: string) {
       return {
-        emit: (event: string, payload: unknown) => emissions.push({ room, event, payload }),
+        emit: (event: string, payload: unknown) =>
+          emissions.push({ room, event, payload }),
       };
     }
   }
-  return { FakeServer, emissions, getConnectionHandler: () => connectionHandler };
+
+  return {
+    FakeServer,
+    emissions,
+    serverSideEmissions,
+    getConnectionHandler: () => connectionHandler,
+    getServerSideHandler: (event: string) => serverSideHandlers[event],
+  };
 });
+
 vi.mock("socket.io", () => ({ Server: ioMock.FakeServer }));
 
 import { dispatchTrip, setupSocketIO } from "./socket";
@@ -69,7 +99,10 @@ import { dispatchTrip, setupSocketIO } from "./socket";
 describe("dispatchTrip", () => {
   beforeEach(async () => {
     vi.clearAllMocks();
+    config.env.REDIS_URL = undefined;
     ioMock.emissions.length = 0;
+    ioMock.serverSideEmissions.length = 0;
+    mocks.registerActiveTrip.mockResolvedValue(undefined);
     mocks.getTripById.mockResolvedValue({
       id: "trip-1",
       status: "REQUESTED",
@@ -415,7 +448,7 @@ describe("dispatchTrip", () => {
       },
     });
 
-    const handlers: Record<string, (tripId: string) => void> = {};
+    const handlers: Record<string, (payload: any) => void> = {};
     const driverSocket = {
       id: "socket-1",
       role: "DRIVER",
@@ -433,7 +466,14 @@ describe("dispatchTrip", () => {
     for (let attempt = 0; attempt < 20 && ioMock.emissions.length === 0; attempt += 1) {
       await new Promise((resolve) => setTimeout(resolve, 0));
     }
-    handlers["trip:accept"]("trip-1");
+    const emittedOffer = ioMock.emissions.find(
+      (emission) => emission.event === "trip:offer"
+    )?.payload as { offerId: string };
+
+    handlers["trip:accept"]({
+      tripId: "trip-1",
+      offerId: emittedOffer.offerId,
+    });
 
     await expect(dispatchPromise).resolves.toMatchObject({ status: "ACCEPTED" });
     const claimToken =
@@ -474,7 +514,10 @@ describe("dispatchTrip", () => {
     expect(ioMock.emissions).toContainEqual({
       room: "driver:driver-1",
       event: "trip:confirmed",
-      payload: { tripId: "trip-1" },
+      payload: {
+        tripId: "trip-1",
+        offerId: emittedOffer.offerId,
+      },
     });
   });
 
@@ -500,7 +543,7 @@ describe("dispatchTrip", () => {
       .mockResolvedValueOnce({ count: 1 })
       .mockResolvedValueOnce({ count: 0 });
 
-    const handlers: Record<string, (tripId: string) => void> = {};
+    const handlers: Record<string, (payload: any) => void> = {};
 
     ioMock.getConnectionHandler()!({
       role: "DRIVER",
@@ -532,7 +575,14 @@ describe("dispatchTrip", () => {
       dispatchStatus: null,
     });
 
-    handlers["trip:accept"]("trip-1");
+    const emittedOffer = ioMock.emissions.find(
+      (emission) => emission.event === "trip:offer"
+    )?.payload as { offerId: string };
+
+    handlers["trip:accept"]({
+      tripId: "trip-1",
+      offerId: emittedOffer.offerId,
+    });
 
     await expect(dispatchPromise).resolves.toEqual({
       status: "FAILED",
@@ -598,7 +648,7 @@ describe("dispatchTrip", () => {
       });
     mocks.tripUpdateMany.mockResolvedValueOnce({ count: 0 });
 
-    const handlers: Record<string, (tripId: string) => Promise<void>> = {};
+    const handlers: Record<string, (payload: any) => Promise<void>> = {};
     const customerSocket = {
       role: "CUSTOMER",
       userId: "customer-1",
@@ -660,9 +710,125 @@ describe("dispatchTrip", () => {
     );
   });
 
+  it("resolves an offer response received by another backend instance", async () => {
+    mocks.findNearbyDrivers.mockResolvedValue([{ driverId: "driver-1" }]);
+    mocks.getJobTimeout.mockReturnValue(10);
+    mocks.assignTripToDriver.mockResolvedValue({
+      driver: {
+        id: "driver-1",
+        vehicleType: "MOTO",
+        licensePlate: "GT-1",
+        user: { name: "Driver", phone: "0200000000" },
+      },
+    });
+
+    const dispatchPromise = dispatchTrip("trip-1");
+
+    for (let attempt = 0; attempt < 20 && ioMock.emissions.length === 0; attempt += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    }
+
+    const offer = ioMock.emissions.find(
+      (emission) => emission.event === "trip:offer"
+    )?.payload as { offerId: string };
+
+    const remoteResponseHandler =
+      ioMock.getServerSideHandler("dispatch:driver-response");
+
+    expect(remoteResponseHandler).toBeTypeOf("function");
+    expect(offer.offerId).toEqual(expect.any(String));
+
+    remoteResponseHandler!({
+      tripId: "trip-1",
+      offerId: offer.offerId,
+      driverId: "driver-1",
+      response: "accept",
+    });
+
+    await expect(dispatchPromise).resolves.toMatchObject({ status: "ACCEPTED" });
+  });
+
+  it("relays a driver accept to other backend instances when Redis is configured", async () => {
+    config.env.REDIS_URL = "redis://cluster";
+
+    const handlers: Record<string, (payload: any) => Promise<void>> = {};
+    const driverSocket = {
+      role: "DRIVER",
+      userId: "driver-user-1",
+      driverId: "driver-1",
+      driverRoomReady: Promise.resolve(),
+      join: vi.fn(),
+      emit: vi.fn(),
+      on: (event: string, handler: (payload: any) => Promise<void>) => {
+        handlers[event] = handler;
+      },
+    };
+
+    ioMock.getConnectionHandler()!(driverSocket);
+
+    await handlers["trip:accept"]({
+      tripId: "trip-remote",
+      offerId: "offer-remote",
+    });
+
+    expect(ioMock.serverSideEmissions).toContainEqual({
+      event: "dispatch:driver-response",
+      payload: {
+        tripId: "trip-remote",
+        offerId: "offer-remote",
+        driverId: "driver-1",
+        response: "accept",
+      },
+    });
+  });
+
+  it("ignores a stale offerId without resolving the active offer", async () => {
+    mocks.findNearbyDrivers.mockResolvedValue([{ driverId: "driver-1" }]);
+    mocks.getJobTimeout.mockReturnValue(10);
+    mocks.assignTripToDriver.mockResolvedValue({
+      driver: {
+        id: "driver-1",
+        vehicleType: "MOTO",
+        licensePlate: "GT-1",
+        user: { name: "Driver", phone: "0200000000" },
+      },
+    });
+
+    const dispatchPromise = dispatchTrip("trip-1");
+
+    for (let attempt = 0; attempt < 20 && ioMock.emissions.length === 0; attempt += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    }
+
+    const offer = ioMock.emissions.find(
+      (emission) => emission.event === "trip:offer"
+    )?.payload as { offerId: string };
+    const remoteResponseHandler =
+      ioMock.getServerSideHandler("dispatch:driver-response")!;
+
+    remoteResponseHandler({
+      tripId: "trip-1",
+      offerId: "stale-offer-id",
+      driverId: "driver-1",
+      response: "accept",
+    });
+
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(mocks.assignTripToDriver).not.toHaveBeenCalled();
+
+    remoteResponseHandler({
+      tripId: "trip-1",
+      offerId: offer.offerId,
+      driverId: "driver-1",
+      response: "accept",
+    });
+
+    await expect(dispatchPromise).resolves.toMatchObject({ status: "ACCEPTED" });
+  });
+
   it("maps NO_DRIVERS to the customer dispatch event", async () => {
     mocks.findNearbyDrivers.mockResolvedValue([]);
-    const handlers: Record<string, (tripId: string) => Promise<void>> = {};
+    const handlers: Record<string, (payload: any) => Promise<void>> = {};
     const customerSocket = {
       role: "CUSTOMER",
       userId: "customer-1",

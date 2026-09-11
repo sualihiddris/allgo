@@ -127,12 +127,12 @@ class SocketService {
     this.emit("driver:location", location);
   }
 
-  acceptTrip(tripId: string) {
-    this.emit("trip:accept", tripId);
+  acceptTrip(tripId: string, offerId: string) {
+    this.emit("trip:accept", { tripId, offerId });
   }
 
-  declineTrip(tripId: string) {
-    this.emit("trip:decline", tripId);
+  declineTrip(tripId: string, offerId: string) {
+    this.emit("trip:decline", { tripId, offerId });
   }
 
   onTripOffer(callback: (offer: any) => void): () => void {

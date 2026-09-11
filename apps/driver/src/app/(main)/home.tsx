@@ -78,6 +78,16 @@ export default function HomeScreen() {
 
         unsubscribeTripAcceptFailed = socketService.onTripAcceptFailed((data) => {
           console.log("Accept failed:", data);
+          const activeOffer = useJobStore.getState().currentOffer;
+
+          if (
+            data.offerId &&
+            activeOffer?.offerId &&
+            data.offerId !== activeOffer.offerId
+          ) {
+            return;
+          }
+
           setIsAccepting(false);
           clearOffer();
           Alert.alert("Error", data.reason || "Failed to accept trip");
@@ -182,13 +192,13 @@ export default function HomeScreen() {
   const handleAcceptOffer = () => {
     if (!currentOffer) return;
     setIsAccepting(true);
-    socketService.acceptTrip(currentOffer.tripId);
+    socketService.acceptTrip(currentOffer.tripId, currentOffer.offerId);
   };
 
   const handleDeclineOffer = () => {
     if (!currentOffer) return;
     setIsDeclining(true);
-    socketService.declineTrip(currentOffer.tripId);
+    socketService.declineTrip(currentOffer.tripId, currentOffer.offerId);
     clearOffer();
     setIsDeclining(false);
   };

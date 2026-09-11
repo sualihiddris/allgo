@@ -71,17 +71,55 @@ export function getIO(): Server {
   return ioInstance;
 }
 
-// Pending job-offer responses, keyed by tripId - not by any specific socket
-// object. A driver's socket can disconnect/reconnect (new socket id) between
-// an offer being sent and the response arriving (e.g. woken by a push
-// notification after the app was backgrounded); resolution must work
-// regardless of which physical connection delivers the accept/decline.
-// Map.delete()'s return value (and the entry's absence) IS the "already
-// resolved" state - no separate boolean needed.
+type DriverOfferResponse = "accept" | "decline";
+
+interface DriverOfferReplyPayload {
+  tripId: string;
+  offerId: string;
+}
+
+interface DistributedDriverResponse extends DriverOfferReplyPayload {
+  driverId: string;
+  response: DriverOfferResponse;
+}
+
+// The Promise remains local to the dispatch owner, while responses can arrive
+// on any backend instance and are relayed through Socket.IO's Redis adapter.
+// offerId prevents an old response from resolving a newer offer for the same
+// trip and driver.
 const pendingResponses = new Map<
   string,
-  { driverId: string; resolve: (response: "accept" | "decline") => void }
+  {
+    tripId: string;
+    driverId: string;
+    resolve: (response: DriverOfferResponse) => void;
+  }
 >();
+
+function resolvePendingDriverResponse(event: DistributedDriverResponse): boolean {
+  const pending = pendingResponses.get(event.offerId);
+
+  if (
+    !pending ||
+    pending.tripId !== event.tripId ||
+    pending.driverId !== event.driverId
+  ) {
+    return false;
+  }
+
+  pending.resolve(event.response);
+  return true;
+}
+
+function relayDriverResponse(io: Server, event: DistributedDriverResponse): boolean {
+  const resolvedLocally = resolvePendingDriverResponse(event);
+
+  if (env.REDIS_URL) {
+    io.serverSideEmit("dispatch:driver-response", event);
+  }
+
+  return resolvedLocally;
+}
 
 const inFlightDispatches = new Map<string, Promise<DispatchTripResult>>();
 
@@ -104,6 +142,10 @@ export async function setupSocketIO(httpServer: HTTPServer): Promise<Server> {
     io.adapter(createAdapter(pubClient, subClient));
     console.log("✅ Socket.io Redis adapter attached");
   }
+
+  io.on("dispatch:driver-response", (event: DistributedDriverResponse) => {
+    resolvePendingDriverResponse(event);
+  });
 
   // Authentication middleware
   //
@@ -235,47 +277,99 @@ export async function setupSocketIO(httpServer: HTTPServer): Promise<Server> {
     });
 
     /**
-     * Driver accepts a trip - resolved via the tripId-keyed pendingResponses
-     * registry (not a per-socket listener), so this works correctly even if
-     * this socket is a reconnect (new id) that woke from a push notification
-     * after the original socket that received the offer had already died.
+     * Driver accepts a specific offer.
      */
-    socket.on("trip:accept", async (tripId: string) => {
+    socket.on("trip:accept", async (payload: DriverOfferReplyPayload) => {
       if (socket.role !== "DRIVER") return;
 
+      await socket.driverRoomReady;
+
+      const tripId = payload?.tripId;
+      const offerId = payload?.offerId;
+
+      if (
+        !socket.driverId ||
+        typeof tripId !== "string" ||
+        typeof offerId !== "string" ||
+        !tripId ||
+        !offerId
+      ) {
+        return socket.emit("trip:accept:failed", {
+          tripId,
+          offerId,
+          reason: "Offer expired or no longer available",
+        });
+      }
+
       try {
-        const pending = pendingResponses.get(tripId);
-        if (!pending || pending.driverId !== socket.driverId) {
+        const available = await isDriverAvailable(socket.driverId);
+
+        if (!available) {
           return socket.emit("trip:accept:failed", {
             tripId,
+            offerId,
+            reason: "Not available",
+          });
+        }
+
+        const resolvedLocally = relayDriverResponse(io, {
+          tripId,
+          offerId,
+          driverId: socket.driverId,
+          response: "accept",
+        });
+
+        if (!env.REDIS_URL && !resolvedLocally) {
+          return socket.emit("trip:accept:failed", {
+            tripId,
+            offerId,
             reason: "Offer expired or no longer available",
           });
         }
 
-        const available = await isDriverAvailable(socket.driverId!);
-
-        if (!available) {
-          return socket.emit("trip:accept:failed", { tripId, reason: "Not available" });
-        }
-
-        pending.resolve("accept");
-        socket.emit("trip:accept:received", { tripId });
+        socket.emit("trip:accept:received", { tripId, offerId });
       } catch (error) {
         console.error("Error accepting trip:", error);
+        socket.emit("trip:accept:failed", {
+          tripId,
+          offerId,
+          reason: "Unable to process response",
+        });
       }
     });
 
     /**
-     * Driver declines a trip
+     * Driver declines a specific offer.
      */
-    socket.on("trip:decline", (tripId: string) => {
+    socket.on("trip:decline", async (payload: DriverOfferReplyPayload) => {
       if (socket.role !== "DRIVER") return;
 
-      const pending = pendingResponses.get(tripId);
-      if (pending && pending.driverId === socket.driverId) {
-        pending.resolve("decline");
+      await socket.driverRoomReady;
+
+      const tripId = payload?.tripId;
+      const offerId = payload?.offerId;
+
+      if (
+        !socket.driverId ||
+        typeof tripId !== "string" ||
+        typeof offerId !== "string" ||
+        !tripId ||
+        !offerId
+      ) {
+        return;
       }
-      socket.emit("trip:decline:received", { tripId });
+
+      try {
+        relayDriverResponse(io, {
+          tripId,
+          offerId,
+          driverId: socket.driverId,
+          response: "decline",
+        });
+        socket.emit("trip:decline:received", { tripId, offerId });
+      } catch (error) {
+        console.error("Error declining trip:", error);
+      }
     });
 
     /**
@@ -500,11 +594,21 @@ async function dispatchTripInternal(tripId: string): Promise<DispatchTripResult>
           };
         }
 
+        const offerId = randomUUID();
+
+        const responsePromise = waitForDriverResponse(
+          candidate.driverId,
+          tripId,
+          offerId,
+          jobTimeoutSeconds
+        );
+
         console.log(
           `[Dispatch] Trip ${tripId}: offering to driver ${candidate.driverId} (radius ${radius}m)`
         );
 
         io.to(`driver:${candidate.driverId}`).emit("trip:offer", {
+          offerId,
           tripId: trip.id,
           vehicleType: trip.vehicleType,
           serviceType: trip.serviceType,
@@ -529,12 +633,6 @@ async function dispatchTripInternal(tripId: string): Promise<DispatchTripResult>
           timeoutSeconds: jobTimeoutSeconds,
         });
 
-        const responsePromise = waitForDriverResponse(
-          candidate.driverId,
-          tripId,
-          jobTimeoutSeconds
-        );
-
         prisma.driver
           .findUnique({
             where: { id: candidate.driverId },
@@ -546,7 +644,7 @@ async function dispatchTripInternal(tripId: string): Promise<DispatchTripResult>
                 candidateDriver.pushToken,
                 "New ride request nearby!",
                 "Open the app to view and respond.",
-                { tripId: trip.id }
+                { tripId: trip.id, offerId }
               );
             }
           })
@@ -571,6 +669,7 @@ async function dispatchTripInternal(tripId: string): Promise<DispatchTripResult>
 
           io.to(`driver:${candidate.driverId}`).emit("trip:confirmed", {
             tripId,
+            offerId,
           });
 
           return {
@@ -632,33 +731,31 @@ async function dispatchTripInternal(tripId: string): Promise<DispatchTripResult>
 }
 
 /**
- * Wait for driver to accept or decline with timeout.
+ * Wait for one specific driver offer to resolve.
  *
- * Resolution is keyed by tripId via the module-level pendingResponses map,
- * not by a specific socket object - the driver's "trip:accept"/"trip:decline"
- * handlers (above, in the connection block) resolve whichever entry matches
- * their tripId, regardless of which physical socket connection delivers it.
- * This is what makes the push-notification wake-up path actually work: a
- * driver who reconnects under a brand new socket id after being woken by a
- * push can still have their accept/decline reach this promise.
+ * offerId is globally unique for each candidate attempt. The dispatcher that
+ * owns this Promise may be on a different backend instance from the socket
+ * connection that receives the driver's response.
  */
 function waitForDriverResponse(
   driverId: string,
   tripId: string,
+  offerId: string,
   timeoutSeconds: number
 ): Promise<"accept" | "decline" | "timeout"> {
   return new Promise((resolve) => {
     const timeout = setTimeout(() => {
-      if (pendingResponses.delete(tripId)) {
+      if (pendingResponses.delete(offerId)) {
         resolve("timeout");
       }
     }, timeoutSeconds * 1000);
 
-    pendingResponses.set(tripId, {
+    pendingResponses.set(offerId, {
+      tripId,
       driverId,
       resolve: (response) => {
         clearTimeout(timeout);
-        pendingResponses.delete(tripId);
+        pendingResponses.delete(offerId);
         resolve(response);
       },
     });

@@ -6,6 +6,7 @@ type DeliveryType = "FOOD" | "GROCERIES" | "PARCELS" | "OTHER";
 
 interface JobOffer {
   tripId: string;
+  offerId: string;
   vehicleType: VehicleType;
   serviceType: ServiceType;
   deliveryType?: DeliveryType;
