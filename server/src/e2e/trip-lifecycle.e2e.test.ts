@@ -116,6 +116,32 @@ async function connectSocket(
   return socket;
 }
 
+async function resetTripState(): Promise<void> {
+  await prisma.trip.deleteMany({
+    where: {
+      OR: [
+        { customerId: CUSTOMER_ID },
+        { driverId: DRIVER_ID },
+      ],
+    },
+  });
+
+  await prisma.driver.update({
+    where: { id: DRIVER_ID },
+    data: {
+      isOnline: true,
+      totalTrips: 0,
+      lastLocation: JSON.stringify({
+        lat: PICKUP.lat,
+        lng: PICKUP.lng,
+        timestamp: new Date().toISOString(),
+      }),
+    },
+  });
+
+  const trackingModule = await import("../services/tracking");
+  await trackingModule.unregisterActiveTrip(DRIVER_ID);
+}
 async function cleanFixture(): Promise<void> {
   await prisma.trip.deleteMany({
     where: {
@@ -143,7 +169,7 @@ async function cleanFixture(): Promise<void> {
   });
 }
 
-describe("E2E-01 customer → driver → completion lifecycle", () => {
+describe("Trip lifecycle E2E", () => {
   beforeAll(async () => {
     const envPath =
       path.basename(process.cwd()).toLowerCase() === "server"
@@ -668,6 +694,378 @@ describe("E2E-01 customer → driver → completion lifecycle", () => {
         });
 
       expect(finalDriver.totalTrips).toBe(1);
+    },
+    20_000
+  );
+  it(
+    "recovers an accepted trip after the driver disconnects and reconnects",
+    async () => {
+      await resetTripState();
+
+      //
+      // 1. Create a fresh trip.
+      //
+      const createResponse = await request(httpServer)
+        .post("/api/v1/bookings/trip")
+        .set("Authorization", `Bearer ${customerToken}`)
+        .send({
+          vehicleType: "MOTO",
+          serviceType: "PASSENGER",
+          pickup: PICKUP,
+          destination: DESTINATION,
+          customerNote: "E2E reconnect recovery test",
+        });
+
+      expect(createResponse.status).toBe(201);
+
+      const trip =
+        createResponse.body.data?.trip ??
+        createResponse.body.trip;
+
+      expect(trip).toBeTruthy();
+
+      const tripId: string = trip.id;
+
+      //
+      // 2. Dispatch and accept with the original driver socket.
+      //
+      const offerPromise =
+        waitForEvent<{
+          tripId: string;
+          offerId: string;
+        }>(
+          driverSocket,
+          "trip:offer"
+        );
+
+      customerSocket.emit(
+        "trip:dispatch",
+        tripId
+      );
+
+      const offer = await offerPromise;
+
+      expect(offer.tripId).toBe(tripId);
+      expect(offer.offerId).toBeTypeOf("string");
+
+      const confirmedPromise =
+        waitForEvent<{
+          tripId: string;
+          offerId: string;
+        }>(
+          driverSocket,
+          "trip:confirmed"
+        );
+
+      driverSocket.emit(
+        "trip:accept",
+        {
+          tripId,
+          offerId: offer.offerId,
+        }
+      );
+
+      await confirmedPromise;
+
+      const acceptedBeforeDisconnect =
+        await prisma.trip.findUniqueOrThrow({
+          where: { id: tripId },
+        });
+
+      expect(
+        acceptedBeforeDisconnect.status
+      ).toBe("ACCEPTED");
+
+      expect(
+        acceptedBeforeDisconnect.driverId
+      ).toBe(DRIVER_ID);
+
+      //
+      // 3. Customer joins the live tracking room.
+      //
+      const trackingStartedPromise =
+        waitForEvent<{
+          tripId: string;
+          driverId: string;
+        }>(
+          customerSocket,
+          "trip:tracking:started"
+        );
+
+      customerSocket.emit(
+        "trip:track",
+        tripId
+      );
+
+      const trackingStarted =
+        await trackingStartedPromise;
+
+      expect(
+        trackingStarted.tripId
+      ).toBe(tripId);
+
+      //
+      // 4. Disconnect the original physical driver socket.
+      //
+      const oldSocketId = driverSocket.id;
+
+      driverSocket.disconnect();
+
+      await waitUntil(
+        () =>
+          (ioServer.sockets.adapter.rooms.get(
+            `driver:${DRIVER_ID}`
+          )?.size ?? 0) === 0,
+        "old driver connection did not leave its room"
+      );
+
+      //
+      // Socket loss must not alter the authoritative assignment.
+      //
+      const acceptedWhileOffline =
+        await prisma.trip.findUniqueOrThrow({
+          where: { id: tripId },
+        });
+
+      expect(
+        acceptedWhileOffline.status
+      ).toBe("ACCEPTED");
+
+      expect(
+        acceptedWhileOffline.driverId
+      ).toBe(DRIVER_ID);
+
+      //
+      // 5. Reconnect as the same authenticated driver.
+      //
+      const address = httpServer.address();
+
+      if (!address || typeof address === "string") {
+        throw new Error(
+          "E2E HTTP server did not expose a TCP address"
+        );
+      }
+
+      const baseUrl =
+        `http://127.0.0.1:${(address as AddressInfo).port}`;
+
+      driverSocket = await connectSocket(
+        baseUrl,
+        driverToken
+      );
+
+      expect(driverSocket.id).toBeTruthy();
+
+      expect(driverSocket.id).not.toBe(
+        oldSocketId
+      );
+
+      await waitUntil(
+        () =>
+          (ioServer.sockets.adapter.rooms.get(
+            `driver:${DRIVER_ID}`
+          )?.size ?? 0) === 1,
+        "reconnected driver did not rejoin its Driver.id room"
+      );
+
+      //
+      // 6. Recover the assigned trip through the real HTTP API.
+      //
+      const activeTripsResponse =
+        await request(httpServer)
+          .get("/api/v1/driver/trips/active")
+          .set(
+            "Authorization",
+            `Bearer ${driverToken}`
+          );
+
+      expect(
+        activeTripsResponse.status
+      ).toBe(200);
+
+      const recoveredTrips =
+        activeTripsResponse.body.data?.trips ??
+        activeTripsResponse.body.trips;
+
+      expect(
+        Array.isArray(recoveredTrips)
+      ).toBe(true);
+
+      const recoveredTrip =
+        recoveredTrips.find(
+          (candidate: { id: string }) =>
+            candidate.id === tripId
+        );
+
+      expect(recoveredTrip).toBeTruthy();
+
+      expect(
+        recoveredTrip.status
+      ).toBe("ACCEPTED");
+
+      //
+      // Reconnect must not duplicate the trip or assignment.
+      //
+      const matchingTripCount =
+        await prisma.trip.count({
+          where: {
+            id: tripId,
+            customerId: CUSTOMER_ID,
+            driverId: DRIVER_ID,
+          },
+        });
+
+      expect(matchingTripCount).toBe(1);
+
+      //
+      // 7. Prove the active-trip mapping survived the socket loss.
+      //
+      const locationPromise =
+        waitForEvent<{
+          driverId: string;
+          lat: number;
+          lng: number;
+        }>(
+          customerSocket,
+          "driver:location:update"
+        );
+
+      driverSocket.emit(
+        "driver:location",
+        {
+          lat: PICKUP.lat + 0.0005,
+          lng: PICKUP.lng + 0.0005,
+          heading: 90,
+        }
+      );
+
+      const locationUpdate =
+        await locationPromise;
+
+      expect(
+        locationUpdate.driverId
+      ).toBe(DRIVER_ID);
+
+      expect(
+        locationUpdate.lat
+      ).toBeCloseTo(
+        PICKUP.lat + 0.0005
+      );
+
+      expect(
+        locationUpdate.lng
+      ).toBeCloseTo(
+        PICKUP.lng + 0.0005
+      );
+
+      //
+      // 8. Continue lifecycle after reconnect.
+      //
+      const activeEventPromise =
+        waitForEvent<{
+          tripId: string;
+          status: string;
+        }>(
+          customerSocket,
+          "trip:status"
+        );
+
+      const startResponse =
+        await request(httpServer)
+          .put(
+            `/api/v1/tracking/trip/${tripId}/status`
+          )
+          .set(
+            "Authorization",
+            `Bearer ${driverToken}`
+          )
+          .send({
+            status: "STARTED",
+          });
+
+      expect(
+        startResponse.status
+      ).toBe(200);
+
+      const activeEvent =
+        await activeEventPromise;
+
+      expect(activeEvent).toEqual({
+        tripId,
+        status: "ACTIVE",
+      });
+
+      const activeTrip =
+        await prisma.trip.findUniqueOrThrow({
+          where: { id: tripId },
+        });
+
+      expect(
+        activeTrip.status
+      ).toBe("ACTIVE");
+
+      //
+      // 9. Complete successfully after reconnect.
+      //
+      const completedEventPromise =
+        waitForEvent<{
+          tripId: string;
+          status: string;
+        }>(
+          customerSocket,
+          "trip:status"
+        );
+
+      const completeResponse =
+        await request(httpServer)
+          .put(
+            `/api/v1/tracking/trip/${tripId}/status`
+          )
+          .set(
+            "Authorization",
+            `Bearer ${driverToken}`
+          )
+          .send({
+            status: "COMPLETED",
+          });
+
+      expect(
+        completeResponse.status
+      ).toBe(200);
+
+      const completedEvent =
+        await completedEventPromise;
+
+      expect(completedEvent).toEqual({
+        tripId,
+        status: "COMPLETED",
+      });
+
+      const finalTrip =
+        await prisma.trip.findUniqueOrThrow({
+          where: { id: tripId },
+        });
+
+      expect(
+        finalTrip.status
+      ).toBe("COMPLETED");
+
+      expect(
+        finalTrip.driverId
+      ).toBe(DRIVER_ID);
+
+      expect(
+        finalTrip.completedAt
+      ).toBeInstanceOf(Date);
+
+      const finalDriver =
+        await prisma.driver.findUniqueOrThrow({
+          where: { id: DRIVER_ID },
+        });
+
+      expect(
+        finalDriver.totalTrips
+      ).toBe(1);
     },
     20_000
   );
