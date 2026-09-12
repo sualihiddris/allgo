@@ -7,6 +7,7 @@ const mocks = vi.hoisted(() => ({
   tripUpdateMany: vi.fn(),
   tripFindUniqueOrThrow: vi.fn(),
   driverUpdate: vi.fn(),
+  transaction: vi.fn(),
   emit: vi.fn(),
   to: vi.fn(),
   unregisterActiveTrip: vi.fn(),
@@ -26,6 +27,7 @@ vi.mock("../middleware", () => ({
 
 vi.mock("../config", () => ({
   prisma: {
+    $transaction: mocks.transaction,
     trip: {
       findUnique: mocks.tripFindUnique,
       updateMany: mocks.tripUpdateMany,
@@ -239,6 +241,18 @@ describe("PUT /api/v1/tracking/trip/:id/status", () => {
     mocks.unregisterActiveTripIfCurrent.mockResolvedValue(true);
     mocks.tripFindUnique.mockResolvedValue(trip);
     mocks.tripUpdateMany.mockResolvedValue({ count: 1 });
+
+    mocks.transaction.mockImplementation(
+      async (callback: any) =>
+        callback({
+          trip: {
+            updateMany: mocks.tripUpdateMany,
+          },
+          driver: {
+            update: mocks.driverUpdate,
+          },
+        })
+    );
   });
 
   it(
@@ -326,6 +340,8 @@ describe("PUT /api/v1/tracking/trip/:id/status", () => {
 
       expect(response.status).toBe(200);
 
+      expect(mocks.transaction).toHaveBeenCalledTimes(1);
+
       expect(
         mocks.tripUpdateMany
       ).toHaveBeenCalledWith(
@@ -383,6 +399,48 @@ describe("PUT /api/v1/tracking/trip/:id/status", () => {
     }
   );
 
+  it(
+    "does not increment totalTrips when COMPLETED loses the lifecycle race",
+    async () => {
+      mocks.tripUpdateMany.mockResolvedValue({
+        count: 0,
+      });
+
+      const response = await request(app)
+        .put(
+          "/api/v1/tracking/trip/trip-1/status"
+        )
+        .send({
+          status: "COMPLETED",
+        });
+
+      expect(response.status).toBe(409);
+
+      expect(
+        mocks.transaction
+      ).toHaveBeenCalledTimes(1);
+
+      expect(
+        mocks.driverUpdate
+      ).not.toHaveBeenCalled();
+
+      expect(
+        mocks.tripFindUniqueOrThrow
+      ).not.toHaveBeenCalled();
+
+      expect(
+        mocks.unregisterActiveTripIfCurrent
+      ).not.toHaveBeenCalled();
+
+      expect(
+        mocks.unregisterActiveTrip
+      ).not.toHaveBeenCalled();
+
+      expect(
+        mocks.emit
+      ).not.toHaveBeenCalled();
+    }
+  );
   it(
     "unregisters the active trip via compare-and-delete on a driver CANCELLED transition",
     async () => {

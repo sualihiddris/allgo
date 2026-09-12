@@ -200,14 +200,46 @@ router.put(
       // The status predicate is the concurrency fence. If customer
       // cancellation changed ACCEPTED -> CANCELLED first, STARTED cannot
       // overwrite it. Likewise duplicate completion cannot increment twice.
-      const transition = await prisma.trip.updateMany({
-        where: {
-          id: tripId,
-          driverId: trip.driverId!,
-          status: expectedCurrentStatus,
-        },
-        data: updateData,
-      });
+      let transition: { count: number };
+
+      if (status === "COMPLETED") {
+        // Completion and the driver's completed-trip counter form one
+        // database invariant. The conditional ACTIVE -> COMPLETED write
+        // remains the concurrency fence; the counter increments only when
+        // this request actually wins that transition.
+        transition = await prisma.$transaction(async (tx) => {
+          const completedTransition = await tx.trip.updateMany({
+            where: {
+              id: tripId,
+              driverId: trip.driverId!,
+              status: expectedCurrentStatus,
+            },
+            data: updateData,
+          });
+
+          if (completedTransition.count === 0) {
+            return completedTransition;
+          }
+
+          await tx.driver.update({
+            where: { id: trip.driverId! },
+            data: {
+              totalTrips: { increment: 1 },
+            },
+          });
+
+          return completedTransition;
+        });
+      } else {
+        transition = await prisma.trip.updateMany({
+          where: {
+            id: tripId,
+            driverId: trip.driverId!,
+            status: expectedCurrentStatus,
+          },
+          data: updateData,
+        });
+      }
 
       if (transition.count === 0) {
         return res.status(409).json({
@@ -234,13 +266,6 @@ router.put(
       }
 
       if (status === "COMPLETED") {
-        await prisma.driver.update({
-          where: { id: trip.driverId! },
-          data: {
-            totalTrips: { increment: 1 },
-          },
-        });
-
         if (trip.driverId) {
           // Trip-specific compare-and-delete: a delayed cleanup for this
           // trip must never remove a newer active_trip mapping.
