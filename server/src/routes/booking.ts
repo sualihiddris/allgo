@@ -15,6 +15,8 @@ import { generalRateLimit } from "../middleware/rateLimit";
 import { createTrip, getTripById, cancelTrip } from "../services/trip";
 import { sendSuccess, sendCreated } from "../utils/response";
 import { prisma } from "../config/database";
+import { getIO } from "../services/socket";
+import { unregisterActiveTripIfCurrent } from "../services/tracking";
 
 const router = Router();
 
@@ -146,6 +148,51 @@ router.post(
       const userId = req.user!.id;
 
       const trip = await cancelTrip(req.params.id, userId, reason);
+
+      // Database state is authoritative. Realtime cleanup happens only
+      // after cancellation has successfully won the database race.
+      if (trip.driverId) {
+        // Trip-specific cleanup: only remove active_trip:<driverId> if it
+        // still belongs to this cancelled trip, so a delayed cleanup can
+        // never delete a newer trip's mapping.
+        try {
+          await unregisterActiveTripIfCurrent(trip.driverId, trip.id);
+        } catch (cleanupError) {
+          console.error(
+            `[Cancellation] Failed to unregister active trip ${trip.id}:`,
+            cleanupError
+          );
+        }
+
+        try {
+          getIO()
+            .to(`driver:${trip.driverId}`)
+            .emit("trip:cancelled", {
+              tripId: trip.id,
+              reason: trip.cancelReason || "Customer cancelled",
+            });
+        } catch (socketError) {
+          console.error(
+            `[Cancellation] Failed to notify driver for trip ${trip.id}:`,
+            socketError
+          );
+        }
+      }
+
+      // Synchronize any other customer session connected for this user.
+      try {
+        getIO()
+          .to(`customer:${userId}`)
+          .emit("trip:status", {
+            tripId: trip.id,
+            status: "CANCELLED",
+          });
+      } catch (socketError) {
+        console.error(
+          `[Cancellation] Failed to notify customer for trip ${trip.id}:`,
+          socketError
+        );
+      }
 
       return sendSuccess(res, { trip });
     } catch (error) {

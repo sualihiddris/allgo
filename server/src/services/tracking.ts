@@ -10,7 +10,7 @@
 
 import { Server } from "socket.io";
 import { prisma } from "../config/database";
-import { redis } from "../config/redis";
+import { redis, compareAndDelete } from "../config/redis";
 
 const ACTIVE_TRIP_PREFIX = "active_trip:";
 const ACTIVE_TRIP_TTL_SECONDS = 12 * 60 * 60; // 12h safety net in case unregister is ever missed
@@ -31,6 +31,27 @@ export async function unregisterActiveTrip(driverId: string): Promise<void> {
   if (deleted) {
     console.log(`📍 Unregistered active trip for driver ${driverId}`);
   }
+}
+
+/**
+ * Unregister active trip only if it still belongs to the given trip.
+ *
+ * Cancellation-safety invariant:
+ * - If active_trip:<driverId> still holds tripId, it is atomically deleted
+ *   and true is returned.
+ * - If the mapping has already moved on to a newer trip (or is missing),
+ *   nothing is deleted and false is returned, so delayed cleanup for a stale
+ *   trip can never remove the current trip's mapping.
+ *
+ * Uses the reviewed atomic compareAndDelete primitive (Lua CAS on real
+ * Redis, direct Map compare-and-delete on the in-memory store).
+ */
+export async function unregisterActiveTripIfCurrent(driverId: string, tripId: string): Promise<boolean> {
+  const deleted = await compareAndDelete(`${ACTIVE_TRIP_PREFIX}${driverId}`, tripId);
+  if (deleted) {
+    console.log(`📍 Unregistered active trip ${tripId} for driver ${driverId}`);
+  }
+  return deleted;
 }
 
 /**

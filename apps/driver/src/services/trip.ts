@@ -1,5 +1,6 @@
 import { API_BASE_URL } from "../constants/config";
 import { driverAuthService } from "./auth";
+import type { ActiveJob } from "../store/jobStore";
 
 export const tripService = {
   async updateTripStatus(
@@ -45,7 +46,7 @@ export const tripService = {
     return data.data.trip;
   },
 
-  async getActiveTrips() {
+  async getActiveTrips(): Promise<ActiveJob[]> {
     const token = driverAuthService.getAccessToken();
     
     const response = await fetch(`${API_BASE_URL}/driver/trips/active`, {

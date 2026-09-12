@@ -12,6 +12,7 @@
 
 import { prisma } from "../config/database";
 import { mapsService } from "./maps";
+import { createError } from "../middleware/errorHandler";
 import { VehicleType, ServiceType, DeliveryType, TripSource } from "@prisma/client";
 
 interface CreateTripInput {
@@ -95,20 +96,81 @@ export async function getTripById(tripId: string) {
   });
 }
 
-export async function cancelTrip(tripId: string, cancelledBy: string, reason?: string) {
-  const trip = await prisma.trip.findUnique({ where: { id: tripId } });
-  
-  if (!trip) throw new Error("Trip not found");
-  if (!["REQUESTED", "ACCEPTED"].includes(trip.status)) {
-    throw new Error("Cannot cancel trip in current status");
+export async function cancelTrip(
+  tripId: string,
+  cancelledBy: string,
+  reason?: string
+) {
+  // The booking cancellation route receives User.id. Resolve it to the
+  // Customer.id stored on Trip so another authenticated user cannot cancel
+  // a trip merely by knowing its id.
+  const customer = await prisma.customer.findUnique({
+    where: { userId: cancelledBy },
+    select: { id: true },
+  });
+
+  if (!customer) {
+    throw createError(
+      "Customer profile not found",
+      403,
+      "FORBIDDEN"
+    );
   }
 
-  return prisma.trip.update({
-    where: { id: tripId },
+  // Cancellation and driver assignment race on the same database row.
+  // This conditional update is the arbitration point: once either operation
+  // changes the status, the competing operation can no longer overwrite it.
+  const cancelled = await prisma.trip.updateMany({
+    where: {
+      id: tripId,
+      customerId: customer.id,
+      status: { in: ["REQUESTED", "ACCEPTED"] },
+    },
     data: {
       status: "CANCELLED",
       cancelledBy,
       cancelReason: reason,
+      dispatchStatus: null,
+      dispatchClaimToken: null,
+      dispatchClaimedAt: null,
     },
+  });
+
+  if (cancelled.count === 0) {
+    // The failed conditional write is authoritative. This lookup is only
+    // used to return an accurate error; it never performs another write.
+    const currentTrip = await prisma.trip.findUnique({
+      where: { id: tripId },
+      select: {
+        customerId: true,
+        status: true,
+      },
+    });
+
+    if (!currentTrip) {
+      throw createError(
+        "Trip not found",
+        404,
+        "TRIP_NOT_FOUND"
+      );
+    }
+
+    if (currentTrip.customerId !== customer.id) {
+      throw createError(
+        "Not authorized to cancel this trip",
+        403,
+        "FORBIDDEN"
+      );
+    }
+
+    throw createError(
+      "Cannot cancel trip in current status",
+      409,
+      "INVALID_TRIP_STATE"
+    );
+  }
+
+  return prisma.trip.findUniqueOrThrow({
+    where: { id: tripId },
   });
 }

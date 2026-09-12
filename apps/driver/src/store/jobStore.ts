@@ -28,7 +28,7 @@ interface JobOffer {
   expiresAt: number;
 }
 
-interface ActiveJob {
+export interface ActiveJob {
   id: string;
   vehicleType: VehicleType;
   serviceType: ServiceType;

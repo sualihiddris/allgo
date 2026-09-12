@@ -18,6 +18,7 @@ import { useJobStore } from "../../store/jobStore";
 import { useDriverStore } from "../../store";
 import tripService from "../../services/trip";
 import locationService from "../../services/location";
+import socketService from "../../services/socket";
 import TripMap from "../../components/TripMap";
 
 const STATUS_CONFIG = {
@@ -39,6 +40,101 @@ export default function ActiveJobScreen() {
   const { activeJob, setActiveJob, reset } = useJobStore();
   const [isUpdating, setIsUpdating] = useState(false);
   const [isTrackingLocation, setIsTrackingLocation] = useState(false);
+  // Cancellation/recovery synchronization.
+  //
+  // Socket delivery gives immediate convergence while HTTP recovery covers
+  // the case where cancellation happened while this device was disconnected.
+  useEffect(() => {
+    let disposed = false;
+    let unsubscribeTripCancelled:
+      | (() => void)
+      | undefined;
+
+    const synchronizeTrip = async () => {
+      try {
+        await socketService.connect();
+
+        if (!disposed) {
+          unsubscribeTripCancelled =
+            socketService.onTripCancelled(
+              (data) => {
+                const state =
+                  useJobStore.getState();
+
+                if (
+                  state.activeJob?.id !==
+                  data.tripId
+                ) {
+                  return;
+                }
+
+                locationService.stopTracking();
+                state.reset();
+
+                Alert.alert(
+                  "Trip Cancelled",
+                  data.reason ||
+                    "The customer cancelled this trip."
+                );
+              }
+            );
+        }
+      } catch (error) {
+        if (!disposed) {
+          console.error(
+            "Failed to connect cancellation socket:",
+            error
+          );
+        }
+      }
+
+      // Socket events are ephemeral. Re-read the authoritative active-trip
+      // list so a cancellation that occurred while disconnected cannot leave
+      // this screen showing a ghost trip.
+      try {
+        const trips =
+          await tripService.getActiveTrips();
+
+        if (disposed) return;
+
+        const state =
+          useJobStore.getState();
+
+        const currentJob =
+          state.activeJob;
+
+        if (
+          currentJob &&
+          !trips.some(
+            (trip) =>
+              trip.id === currentJob.id
+          )
+        ) {
+          locationService.stopTracking();
+          state.reset();
+
+          Alert.alert(
+            "Trip Ended",
+            "This trip is no longer active."
+          );
+        }
+      } catch (error) {
+        if (!disposed) {
+          console.error(
+            "Failed to reconcile active trip:",
+            error
+          );
+        }
+      }
+    };
+
+    void synchronizeTrip();
+
+    return () => {
+      disposed = true;
+      unsubscribeTripCancelled?.();
+    };
+  }, []);
 
   // Start location tracking when screen mounts
   useEffect(() => {

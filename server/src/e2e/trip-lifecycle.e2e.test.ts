@@ -1069,4 +1069,552 @@ describe("Trip lifecycle E2E", () => {
     },
     20_000
   );
+
+  it(
+    "E2E-03A: customer cancellation beats a stale driver accept",
+    async () => {
+      await resetTripState();
+
+      //
+      // 1. Create a fresh REQUESTED trip through the real booking API.
+      //
+      const createResponse = await request(httpServer)
+        .post("/api/v1/bookings/trip")
+        .set("Authorization", `Bearer ${customerToken}`)
+        .send({
+          vehicleType: "MOTO",
+          serviceType: "PASSENGER",
+          pickup: PICKUP,
+          destination: DESTINATION,
+          customerNote: "E2E-03A stale accept after cancellation",
+        });
+
+      expect(createResponse.status).toBe(201);
+
+      const trip =
+        createResponse.body.data?.trip ??
+        createResponse.body.trip;
+
+      expect(trip).toBeTruthy();
+
+      const tripId: string = trip.id;
+
+      //
+      // 2. Start real dispatch and capture the correlated driver offer.
+      // Calling dispatchTrip directly gives the test a deterministic
+      // completion promise while still using the real driver socket.
+      //
+      const socketModule = await import("../services/socket");
+      const trackingModule = await import("../services/tracking");
+
+      const offerPromise = waitForEvent<{
+        tripId: string;
+        offerId: string;
+      }>(
+        driverSocket,
+        "trip:offer"
+      );
+
+      const confirmations: Array<{
+        tripId: string;
+        offerId: string;
+      }> = [];
+
+      const onConfirmed = (payload: {
+        tripId: string;
+        offerId: string;
+      }) => {
+        confirmations.push(payload);
+      };
+
+      driverSocket.on(
+        "trip:confirmed",
+        onConfirmed
+      );
+
+      try {
+        const dispatchPromise =
+          socketModule.dispatchTrip(tripId);
+
+        const offer = await offerPromise;
+
+        expect(offer.tripId).toBe(tripId);
+        expect(offer.offerId).toBeTypeOf("string");
+        expect(offer.offerId.length).toBeGreaterThan(0);
+
+        //
+        // 3. Customer cancellation wins before the driver accepts.
+        //
+        const cancelResponse = await request(httpServer)
+          .post(
+            `/api/v1/bookings/trip/${tripId}/cancel`
+          )
+          .set(
+            "Authorization",
+            `Bearer ${customerToken}`
+          )
+          .send({
+            reason: "E2E-03A customer cancelled before accept",
+          });
+
+        expect(cancelResponse.status).toBe(200);
+
+        const cancelledAfterHttp =
+          await prisma.trip.findUniqueOrThrow({
+            where: { id: tripId },
+          });
+
+        expect(cancelledAfterHttp.status).toBe(
+          "CANCELLED"
+        );
+        expect(cancelledAfterHttp.driverId).toBeNull();
+        expect(
+          cancelledAfterHttp.dispatchStatus
+        ).toBeNull();
+        expect(
+          cancelledAfterHttp.dispatchClaimToken
+        ).toBeNull();
+        expect(
+          cancelledAfterHttp.dispatchClaimedAt
+        ).toBeNull();
+
+        expect(
+          await trackingModule.getActiveTripForDriver(
+            DRIVER_ID
+          )
+        ).toBeUndefined();
+
+        //
+        // 4. Driver now sends the stale accept using the exact old offerId.
+        //
+        const acceptReceivedPromise =
+          waitForEvent<{
+            tripId: string;
+            offerId: string;
+          }>(
+            driverSocket,
+            "trip:accept:received"
+          );
+
+        driverSocket.emit(
+          "trip:accept",
+          {
+            tripId,
+            offerId: offer.offerId,
+          }
+        );
+
+        const acceptReceived =
+          await acceptReceivedPromise;
+
+        expect(acceptReceived).toEqual({
+          tripId,
+          offerId: offer.offerId,
+        });
+
+        //
+        // Await the real dispatch operation. This is the synchronization
+        // boundary proving the stale accept has been processed completely.
+        //
+        const dispatchResult =
+          await dispatchPromise;
+
+        expect(dispatchResult.status).not.toBe(
+          "ACCEPTED"
+        );
+
+        //
+        // 5. Authoritative proof: stale accept could not resurrect the trip.
+        //
+        const finalTrip =
+          await prisma.trip.findUniqueOrThrow({
+            where: { id: tripId },
+          });
+
+        expect(finalTrip.status).toBe("CANCELLED");
+        expect(finalTrip.driverId).toBeNull();
+        expect(finalTrip.dispatchStatus).toBeNull();
+        expect(
+          finalTrip.dispatchClaimToken
+        ).toBeNull();
+        expect(
+          finalTrip.dispatchClaimedAt
+        ).toBeNull();
+
+        expect(
+          await trackingModule.getActiveTripForDriver(
+            DRIVER_ID
+          )
+        ).toBeUndefined();
+
+        //
+        // dispatchPromise has settled, so any confirmation belonging to
+        // this dispatch would already have been emitted.
+        //
+        expect(confirmations).toEqual([]);
+      } finally {
+        driverSocket.off(
+          "trip:confirmed",
+          onConfirmed
+        );
+      }
+    },
+    20_000
+  );
+
+  it(
+    "E2E-03B: accepted trip cancellation notifies driver, clears mapping and fences stale STARTED",
+    async () => {
+      await resetTripState();
+
+      //
+      // 1. Create a fresh trip.
+      //
+      const createResponse = await request(httpServer)
+        .post("/api/v1/bookings/trip")
+        .set("Authorization", `Bearer ${customerToken}`)
+        .send({
+          vehicleType: "MOTO",
+          serviceType: "PASSENGER",
+          pickup: PICKUP,
+          destination: DESTINATION,
+          customerNote: "E2E-03B accepted cancellation",
+        });
+
+      expect(createResponse.status).toBe(201);
+
+      const trip =
+        createResponse.body.data?.trip ??
+        createResponse.body.trip;
+
+      expect(trip).toBeTruthy();
+
+      const tripId: string = trip.id;
+
+      const socketModule = await import("../services/socket");
+      const trackingModule = await import("../services/tracking");
+
+      //
+      // 2. Dispatch and accept using the real driver socket.
+      //
+      const offerPromise = waitForEvent<{
+        tripId: string;
+        offerId: string;
+      }>(
+        driverSocket,
+        "trip:offer"
+      );
+
+      const confirmedPromise = waitForEvent<{
+        tripId: string;
+        offerId: string;
+      }>(
+        driverSocket,
+        "trip:confirmed"
+      );
+
+      const dispatchPromise =
+        socketModule.dispatchTrip(tripId);
+
+      const offer = await offerPromise;
+
+      expect(offer.tripId).toBe(tripId);
+      expect(offer.offerId).toBeTypeOf("string");
+
+      driverSocket.emit(
+        "trip:accept",
+        {
+          tripId,
+          offerId: offer.offerId,
+        }
+      );
+
+      const confirmation =
+        await confirmedPromise;
+
+      expect(confirmation).toEqual({
+        tripId,
+        offerId: offer.offerId,
+      });
+
+      const dispatchResult =
+        await dispatchPromise;
+
+      expect(dispatchResult.status).toBe(
+        "ACCEPTED"
+      );
+
+      //
+      // 3. Prove authoritative assignment and active mapping exist.
+      //
+      const acceptedTrip =
+        await prisma.trip.findUniqueOrThrow({
+          where: { id: tripId },
+        });
+
+      expect(acceptedTrip.status).toBe(
+        "ACCEPTED"
+      );
+      expect(acceptedTrip.driverId).toBe(
+        DRIVER_ID
+      );
+      expect(
+        acceptedTrip.dispatchClaimToken
+      ).toBeNull();
+      expect(
+        acceptedTrip.dispatchClaimedAt
+      ).toBeNull();
+
+      expect(
+        await trackingModule.getActiveTripForDriver(
+          DRIVER_ID
+        )
+      ).toBe(tripId);
+
+      //
+      // 4. Subscribe before cancellation so notification cannot race us.
+      //
+      const cancelledEventPromise =
+        waitForEvent<{
+          tripId: string;
+          reason: string;
+        }>(
+          driverSocket,
+          "trip:cancelled"
+        );
+
+      const cancelResponse = await request(httpServer)
+        .post(
+          `/api/v1/bookings/trip/${tripId}/cancel`
+        )
+        .set(
+          "Authorization",
+          `Bearer ${customerToken}`
+        )
+        .send({
+          reason: "E2E-03B customer cancelled accepted trip",
+        });
+
+      expect(cancelResponse.status).toBe(200);
+
+      const cancelledEvent =
+        await cancelledEventPromise;
+
+      expect(cancelledEvent).toEqual({
+        tripId,
+        reason:
+          "E2E-03B customer cancelled accepted trip",
+      });
+
+      //
+      // 5. DB cancellation retains historical driver assignment but
+      // clears dispatch ownership and active mapping.
+      //
+      const cancelledTrip =
+        await prisma.trip.findUniqueOrThrow({
+          where: { id: tripId },
+        });
+
+      expect(cancelledTrip.status).toBe(
+        "CANCELLED"
+      );
+      expect(cancelledTrip.driverId).toBe(
+        DRIVER_ID
+      );
+      expect(
+        cancelledTrip.dispatchStatus
+      ).toBeNull();
+      expect(
+        cancelledTrip.dispatchClaimToken
+      ).toBeNull();
+      expect(
+        cancelledTrip.dispatchClaimedAt
+      ).toBeNull();
+
+      expect(
+        await trackingModule.getActiveTripForDriver(
+          DRIVER_ID
+        )
+      ).toBeUndefined();
+
+      //
+      // 6. A stale STARTED request must be rejected by lifecycle fencing.
+      //
+      const staleStartResponse =
+        await request(httpServer)
+          .put(
+            `/api/v1/tracking/trip/${tripId}/status`
+          )
+          .set(
+            "Authorization",
+            `Bearer ${driverToken}`
+          )
+          .send({
+            status: "STARTED",
+          });
+
+      expect(staleStartResponse.status).toBe(
+        409
+      );
+
+      const afterStaleStart =
+        await prisma.trip.findUniqueOrThrow({
+          where: { id: tripId },
+        });
+
+      expect(afterStaleStart.status).toBe(
+        "CANCELLED"
+      );
+      expect(afterStaleStart.driverId).toBe(
+        DRIVER_ID
+      );
+
+      expect(
+        await trackingModule.getActiveTripForDriver(
+          DRIVER_ID
+        )
+      ).toBeUndefined();
+    },
+    20_000
+  );
+
+  it(
+    "rejects customer cancellation after the trip is ACTIVE without changing state",
+    async () => {
+      await resetTripState();
+
+      //
+      // 1. Create and accept a fresh trip.
+      //
+      const createResponse = await request(httpServer)
+        .post("/api/v1/bookings/trip")
+        .set("Authorization", `Bearer ${customerToken}`)
+        .send({
+          vehicleType: "MOTO",
+          serviceType: "PASSENGER",
+          pickup: PICKUP,
+          destination: DESTINATION,
+          customerNote: "E2E ACTIVE cancellation guard",
+        });
+
+      expect(createResponse.status).toBe(201);
+
+      const trip =
+        createResponse.body.data?.trip ??
+        createResponse.body.trip;
+
+      const tripId: string = trip.id;
+
+      const socketModule = await import("../services/socket");
+      const trackingModule = await import("../services/tracking");
+
+      const offerPromise = waitForEvent<{
+        tripId: string;
+        offerId: string;
+      }>(
+        driverSocket,
+        "trip:offer"
+      );
+
+      const confirmedPromise = waitForEvent<{
+        tripId: string;
+        offerId: string;
+      }>(
+        driverSocket,
+        "trip:confirmed"
+      );
+
+      const dispatchPromise =
+        socketModule.dispatchTrip(tripId);
+
+      const offer = await offerPromise;
+
+      driverSocket.emit(
+        "trip:accept",
+        {
+          tripId,
+          offerId: offer.offerId,
+        }
+      );
+
+      await confirmedPromise;
+      await dispatchPromise;
+
+      expect(
+        await trackingModule.getActiveTripForDriver(
+          DRIVER_ID
+        )
+      ).toBe(tripId);
+
+      //
+      // 2. Move ACCEPTED -> ACTIVE through the real driver API.
+      //
+      const startResponse = await request(
+        httpServer
+      )
+        .put(
+          `/api/v1/tracking/trip/${tripId}/status`
+        )
+        .set(
+          "Authorization",
+          `Bearer ${driverToken}`
+        )
+        .send({
+          status: "STARTED",
+        });
+
+      expect(startResponse.status).toBe(200);
+
+      const activeTrip =
+        await prisma.trip.findUniqueOrThrow({
+          where: { id: tripId },
+        });
+
+      expect(activeTrip.status).toBe("ACTIVE");
+      expect(activeTrip.driverId).toBe(
+        DRIVER_ID
+      );
+
+      //
+      // 3. Customer cancellation is no longer legal.
+      //
+      const cancelResponse = await request(httpServer)
+        .post(
+          `/api/v1/bookings/trip/${tripId}/cancel`
+        )
+        .set(
+          "Authorization",
+          `Bearer ${customerToken}`
+        )
+        .send({
+          reason: "This cancellation must be rejected",
+        });
+
+      expect(cancelResponse.status).toBe(409);
+
+      //
+      // 4. State and active mapping remain untouched.
+      //
+      const finalTrip =
+        await prisma.trip.findUniqueOrThrow({
+          where: { id: tripId },
+        });
+
+      expect(finalTrip.status).toBe("ACTIVE");
+      expect(finalTrip.driverId).toBe(
+        DRIVER_ID
+      );
+      expect(finalTrip.startedAt).toBeInstanceOf(
+        Date
+      );
+
+      expect(
+        await trackingModule.getActiveTripForDriver(
+          DRIVER_ID
+        )
+      ).toBe(tripId);
+    },
+    20_000
+  );
+
 });

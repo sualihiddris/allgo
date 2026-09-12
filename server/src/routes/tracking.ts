@@ -12,7 +12,7 @@ import { requireAuth } from "../middleware";
 import { prisma } from "../config";
 import { sendSuccess } from "../utils";
 import { getIO } from "../services/socket";
-import { unregisterActiveTrip } from "../services/tracking";
+import { unregisterActiveTripIfCurrent } from "../services/tracking";
 
 const router = Router();
 
@@ -139,32 +139,61 @@ router.put(
           .json({ error: { message: "Not authorized to update this trip" } });
       }
 
-      // Build update data
-      const updateData: any = { status };
+      // Convert the API command into the canonical status and the exact
+      // state from which that transition is permitted.
+      const canonicalStatus =
+        status === "STARTED" ? "ACTIVE" : status;
 
-      // Map status transitions to timestamps
+      const expectedCurrentStatus =
+        status === "STARTED"
+          ? "ACCEPTED"
+          : status === "COMPLETED"
+          ? "ACTIVE"
+          : "ACCEPTED";
+
+      const updateData: any = {
+        status: canonicalStatus,
+      };
+
       switch (status) {
         case "STARTED":
-          updateData.status = "ACTIVE";
           updateData.startedAt = new Date();
           break;
+
         case "COMPLETED":
           updateData.completedAt = new Date();
-          // Increment driver's trip count
-          await prisma.driver.update({
-            where: { id: trip.driverId! },
-            data: { totalTrips: { increment: 1 } },
-          });
-          if (trip.driverId) await unregisterActiveTrip(trip.driverId);
           break;
+
         case "CANCELLED":
           updateData.cancelledBy = req.user!.id;
-          updateData.cancelReason = cancelReason || "Driver cancelled";
-          if (trip.driverId) await unregisterActiveTrip(trip.driverId);
+          updateData.cancelReason =
+            cancelReason || "Driver cancelled";
           break;
       }
 
-      // Update driver location if provided
+      // The status predicate is the concurrency fence. If customer
+      // cancellation changed ACCEPTED -> CANCELLED first, STARTED cannot
+      // overwrite it. Likewise duplicate completion cannot increment twice.
+      const transition = await prisma.trip.updateMany({
+        where: {
+          id: tripId,
+          driverId: trip.driverId!,
+          status: expectedCurrentStatus,
+        },
+        data: updateData,
+      });
+
+      if (transition.count === 0) {
+        return res.status(409).json({
+          error: {
+            message:
+              "Trip state changed before this update could be applied",
+          },
+        });
+      }
+
+      // Perform secondary effects only after this request actually won the
+      // authoritative state transition.
       if (location && trip.driverId) {
         await prisma.driver.update({
           where: { id: trip.driverId },
@@ -178,11 +207,29 @@ router.put(
         });
       }
 
-      const updatedTrip = await prisma.trip.update({
-        where: { id: tripId },
-        data: updateData,
-      });
+      if (status === "COMPLETED") {
+        await prisma.driver.update({
+          where: { id: trip.driverId! },
+          data: {
+            totalTrips: { increment: 1 },
+          },
+        });
 
+        if (trip.driverId) {
+          // Trip-specific compare-and-delete: a delayed cleanup for this
+          // trip must never remove a newer active_trip mapping.
+          await unregisterActiveTripIfCurrent(trip.driverId, tripId);
+        }
+      }
+
+      if (status === "CANCELLED" && trip.driverId) {
+        await unregisterActiveTripIfCurrent(trip.driverId, tripId);
+      }
+
+      const updatedTrip =
+        await prisma.trip.findUniqueOrThrow({
+          where: { id: tripId },
+        });
       console.log(
         `[Tracking] Trip ${tripId} status → ${updatedTrip.status}`
       );

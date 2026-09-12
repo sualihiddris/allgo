@@ -39,7 +39,7 @@ export default function HomeScreen() {
     let unsubscribeTripOffer: (() => void) | undefined;
     let unsubscribeTripConfirmed: (() => void) | undefined;
     let unsubscribeTripAcceptFailed: (() => void) | undefined;
-
+    let unsubscribeTripCancelled: (() => void) | undefined;
     const connectSocket = async () => {
       if (!isOnline) return;
 
@@ -92,6 +92,44 @@ export default function HomeScreen() {
           clearOffer();
           Alert.alert("Error", data.reason || "Failed to accept trip");
         });
+        unsubscribeTripCancelled =
+          socketService.onTripCancelled((data) => {
+            const state =
+              useJobStore.getState();
+
+            const matchesOffer =
+              state.currentOffer?.tripId ===
+              data.tripId;
+
+            const matchesActiveJob =
+              state.activeJob?.id ===
+              data.tripId;
+
+            // Ignore cancellation events for stale/other trips.
+            if (
+              !matchesOffer &&
+              !matchesActiveJob
+            ) {
+              return;
+            }
+
+            console.log(
+              "Trip cancelled:",
+              data
+            );
+
+            // Stop location collection before clearing the job. Home and
+            // Active Job may both receive this event; either listener must
+            // be independently safe to handle cancellation first.
+            locationService.stopTracking();
+            state.reset();
+
+            Alert.alert(
+              "Trip Cancelled",
+              data.reason ||
+                "The customer cancelled this trip."
+            );
+          });
 
         if (!cancelled) {
           await locationService.startTracking();
@@ -110,6 +148,7 @@ export default function HomeScreen() {
       unsubscribeTripOffer?.();
       unsubscribeTripConfirmed?.();
       unsubscribeTripAcceptFailed?.();
+      unsubscribeTripCancelled?.();
       locationService.stopTracking();
       socketService.disconnect();
     };

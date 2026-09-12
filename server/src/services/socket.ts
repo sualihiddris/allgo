@@ -22,7 +22,12 @@ import {
   isVehicleAllowedAtNight,
 } from "../services/dispatch";
 import { getTripById } from "../services/trip";
-import { startTripTracking, registerActiveTrip, unregisterActiveTrip, getActiveTripForDriver } from "../services/tracking";
+import {
+  startTripTracking,
+  registerActiveTrip,
+  unregisterActiveTripIfCurrent,
+  getActiveTripForDriver,
+} from "../services/tracking";
 import { sendPushNotification } from "../services/push";
 import { VehicleType } from "@prisma/client";
 import { prisma } from "../config/database";
@@ -666,6 +671,32 @@ async function dispatchTripInternal(tripId: string): Promise<DispatchTripResult>
           );
 
           await registerActiveTrip(candidate.driverId, tripId);
+
+          // Assignment won its atomic database transition, but cancellation
+          // may have won while post-assignment work was awaiting. Check the
+          // authoritative row before telling the driver the trip is confirmed.
+          const confirmationState = await prisma.trip.findUnique({
+            where: { id: tripId },
+            select: {
+              status: true,
+              driverId: true,
+            },
+          });
+
+          if (
+            confirmationState?.status !== "ACCEPTED" ||
+            confirmationState.driverId !== candidate.driverId
+          ) {
+            await unregisterActiveTripIfCurrent(
+          candidate.driverId,
+          tripId
+        );
+
+            return {
+              status: "IN_PROGRESS",
+              reason: "Trip lifecycle changed before driver confirmation",
+            };
+          }
 
           io.to(`driver:${candidate.driverId}`).emit("trip:confirmed", {
             tripId,

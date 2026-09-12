@@ -1,21 +1,26 @@
-import express from "express";
+import express, { type NextFunction, type Request, type Response } from "express";
 import request from "supertest";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
   customerFindUnique: vi.fn(),
   tripFindFirst: vi.fn(),
+  cancelTrip: vi.fn(),
+  unregisterActiveTripIfCurrent: vi.fn(),
+  unregisterActiveTrip: vi.fn(),
+  ioTo: vi.fn(),
+  ioEmit: vi.fn(),
 }));
 
 vi.mock("../middleware/auth", () => ({
-  requireAuth: (req: any, _res: any, next: () => void) => {
-    req.user = { id: "customer-user-1", role: "CUSTOMER" };
+  requireAuth: (req: Request, _res: Response, next: NextFunction) => {
+    req.user = { id: "customer-user-1", phone: "0241000001", role: "CUSTOMER" };
     next();
   },
 }));
 
 vi.mock("../middleware/rateLimit", () => ({
-  generalRateLimit: (_req: any, _res: any, next: () => void) => next(),
+  generalRateLimit: (_req: Request, _res: Response, next: NextFunction) => next(),
 }));
 
 vi.mock("../config/database", () => ({
@@ -28,12 +33,24 @@ vi.mock("../config/database", () => ({
 vi.mock("../services/trip", () => ({
   createTrip: vi.fn(),
   getTripById: vi.fn(),
-  cancelTrip: vi.fn(),
+  cancelTrip: mocks.cancelTrip,
+}));
+
+vi.mock("../services/socket", () => ({
+  getIO: () => ({
+    to: mocks.ioTo,
+  }),
+}));
+
+vi.mock("../services/tracking", () => ({
+  unregisterActiveTrip: mocks.unregisterActiveTrip,
+  unregisterActiveTripIfCurrent: mocks.unregisterActiveTripIfCurrent,
 }));
 
 import { bookingRouter } from "./booking";
 
 const app = express();
+app.use(express.json());
 app.use("/api/v1/bookings", bookingRouter);
 
 const activeTrip = {
@@ -166,4 +183,147 @@ describe("GET /api/v1/bookings/trips/active", () => {
       expect(response.body.data.trip).toMatchObject({ status, dispatchStatus: null });
     }
   });
+});
+
+describe("POST /api/v1/bookings/trip/:id/cancel", () => {
+  const cancelledTrip = {
+    id: "trip-cancel-1",
+    driverId: "driver-1",
+    status: "CANCELLED",
+    cancelReason: "Changed my mind",
+  };
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mocks.ioTo.mockReturnValue({ emit: mocks.ioEmit });
+    mocks.unregisterActiveTripIfCurrent.mockResolvedValue(true);
+  });
+
+  it("calls unregisterActiveTripIfCurrent with exact driverId and tripId for an assigned trip", async () => {
+    mocks.cancelTrip.mockResolvedValue(cancelledTrip);
+
+    const response = await request(app)
+      .post("/api/v1/bookings/trip/trip-cancel-1/cancel")
+      .send({ reason: "Changed my mind" });
+
+    expect(response.status).toBe(200);
+    expect(mocks.cancelTrip).toHaveBeenCalledWith(
+      "trip-cancel-1",
+      "customer-user-1",
+      "Changed my mind"
+    );
+    expect(mocks.unregisterActiveTripIfCurrent).toHaveBeenCalledTimes(1);
+    expect(mocks.unregisterActiveTripIfCurrent).toHaveBeenCalledWith("driver-1", "trip-cancel-1");
+    expect(mocks.unregisterActiveTrip).not.toHaveBeenCalled();
+  });
+
+  it("returns the successful cancellation response even if cleanup rejects", async () => {
+    mocks.cancelTrip.mockResolvedValue(cancelledTrip);
+    mocks.unregisterActiveTripIfCurrent.mockRejectedValue(new Error("redis down"));
+
+    const response = await request(app)
+      .post("/api/v1/bookings/trip/trip-cancel-1/cancel")
+      .send({ reason: "Changed my mind" });
+
+    expect(response.status).toBe(200);
+    expect(response.body.success).toBe(true);
+    expect(response.body.data.trip).toEqual(cancelledTrip);
+  });
+
+  it("still notifies the driver with trip:cancelled after committed cancellation, even if cleanup fails", async () => {
+    mocks.cancelTrip.mockResolvedValue(cancelledTrip);
+    mocks.unregisterActiveTripIfCurrent.mockRejectedValue(new Error("redis down"));
+
+    const response = await request(app)
+      .post("/api/v1/bookings/trip/trip-cancel-1/cancel")
+      .send({ reason: "Changed my mind" });
+
+    expect(response.status).toBe(200);
+    expect(mocks.ioTo).toHaveBeenCalledWith("driver:driver-1");
+    expect(mocks.ioEmit).toHaveBeenCalledWith("trip:cancelled", {
+      tripId: "trip-cancel-1",
+      reason: "Changed my mind",
+    });
+    expect(mocks.ioTo).toHaveBeenCalledWith("customer:customer-user-1");
+    expect(mocks.ioEmit).toHaveBeenCalledWith("trip:status", {
+      tripId: "trip-cancel-1",
+      status: "CANCELLED",
+    });
+  });
+
+  it("uses the default reason when the trip has no cancelReason", async () => {
+    mocks.cancelTrip.mockResolvedValue({ ...cancelledTrip, cancelReason: null });
+
+    const response = await request(app)
+      .post("/api/v1/bookings/trip/trip-cancel-1/cancel")
+      .send({});
+
+    expect(response.status).toBe(200);
+    expect(mocks.unregisterActiveTripIfCurrent).toHaveBeenCalledWith("driver-1", "trip-cancel-1");
+    expect(mocks.ioEmit).toHaveBeenCalledWith("trip:cancelled", {
+      tripId: "trip-cancel-1",
+      reason: "Customer cancelled",
+    });
+  });
+
+  it("does not run driver cleanup or driver notification when the cancelled trip has no driver", async () => {
+    mocks.cancelTrip.mockResolvedValue({ ...cancelledTrip, driverId: null });
+
+    const response = await request(app)
+      .post("/api/v1/bookings/trip/trip-cancel-1/cancel")
+      .send({});
+
+    expect(response.status).toBe(200);
+    expect(mocks.unregisterActiveTripIfCurrent).not.toHaveBeenCalled();
+    expect(mocks.unregisterActiveTrip).not.toHaveBeenCalled();
+    expect(mocks.ioTo).not.toHaveBeenCalledWith("driver:driver-1");
+    expect(mocks.ioEmit).toHaveBeenCalledWith("trip:status", {
+      tripId: "trip-cancel-1",
+      status: "CANCELLED",
+    });
+  });
+
+  it.each([
+    {
+      label: "authorization error",
+      statusCode: 403,
+      error: Object.assign(new Error("Forbidden"), { statusCode: 403 }),
+    },
+    {
+      label: "lifecycle error",
+      statusCode: 409,
+      error: Object.assign(new Error("Trip cannot be cancelled in its current state"), {
+        statusCode: 409,
+      }),
+    },
+  ])(
+    "propagates the exact $label (statusCode $statusCode) without cleanup or socket side effects",
+    async ({ statusCode, error }) => {
+      mocks.cancelTrip.mockRejectedValue(error);
+
+      // Isolated app so the error handler never mutates the shared app
+      // used by the other cancellation tests.
+      let captured: unknown;
+      const isolatedApp = express();
+      isolatedApp.use(express.json());
+      isolatedApp.use("/api/v1/bookings", bookingRouter);
+      isolatedApp.use(
+        (err: unknown, _req: Request, res: Response, _next: NextFunction) => {
+          captured = err;
+          res.status(statusCode).json({ success: false });
+        }
+      );
+
+      const response = await request(isolatedApp)
+        .post("/api/v1/bookings/trip/trip-cancel-1/cancel")
+        .send({});
+
+      expect(response.status).toBe(statusCode);
+      expect(captured).toBe(error);
+      expect(mocks.unregisterActiveTripIfCurrent).not.toHaveBeenCalled();
+      expect(mocks.unregisterActiveTrip).not.toHaveBeenCalled();
+      expect(mocks.ioTo).not.toHaveBeenCalled();
+      expect(mocks.ioEmit).not.toHaveBeenCalled();
+    }
+  );
 });

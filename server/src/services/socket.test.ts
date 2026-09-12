@@ -11,9 +11,12 @@ const mocks = vi.hoisted(() => ({
   isNightServiceHours: vi.fn(),
   isVehicleAllowedAtNight: vi.fn(),
   registerActiveTrip: vi.fn(),
+  unregisterActiveTrip: vi.fn(),
+  unregisterActiveTripIfCurrent: vi.fn(),
   sendPushNotification: vi.fn(),
   driverFindUnique: vi.fn(),
   tripUpdateMany: vi.fn(),
+  tripFindUnique: vi.fn(),
 }));
 
 const config = vi.hoisted(() => ({
@@ -27,7 +30,10 @@ vi.mock("../config", () => config);
 vi.mock("../config/database", () => ({
   prisma: {
     driver: { findUnique: mocks.driverFindUnique },
-    trip: { updateMany: mocks.tripUpdateMany },
+    trip: {
+      updateMany: mocks.tripUpdateMany,
+      findUnique: mocks.tripFindUnique,
+    },
   },
 }));
 vi.mock("../services/trip", () => ({ getTripById: mocks.getTripById }));
@@ -44,7 +50,9 @@ vi.mock("../services/dispatch", () => ({
 vi.mock("../services/tracking", () => ({
   registerActiveTrip: mocks.registerActiveTrip,
   startTripTracking: vi.fn(),
-  unregisterActiveTrip: vi.fn(),
+  unregisterActiveTrip: mocks.unregisterActiveTrip,
+  unregisterActiveTripIfCurrent:
+    mocks.unregisterActiveTripIfCurrent,
   getActiveTripForDriver: vi.fn(),
 }));
 vi.mock("../services/push", () => ({ sendPushNotification: mocks.sendPushNotification }));
@@ -103,6 +111,8 @@ describe("dispatchTrip", () => {
     ioMock.emissions.length = 0;
     ioMock.serverSideEmissions.length = 0;
     mocks.registerActiveTrip.mockResolvedValue(undefined);
+    mocks.unregisterActiveTrip.mockResolvedValue(undefined);
+    mocks.unregisterActiveTripIfCurrent.mockResolvedValue(true);
     mocks.getTripById.mockResolvedValue({
       id: "trip-1",
       status: "REQUESTED",
@@ -129,6 +139,10 @@ describe("dispatchTrip", () => {
     mocks.isDriverAvailable.mockResolvedValue(true);
     mocks.driverFindUnique.mockResolvedValue({ id: "driver-1", pushToken: null });
     mocks.tripUpdateMany.mockResolvedValue({ count: 1 });
+    mocks.tripFindUnique.mockResolvedValue({
+      status: "ACCEPTED",
+      driverId: "driver-1",
+    });
     await setupSocketIO(createServer());
   });
 
@@ -847,4 +861,119 @@ describe("dispatchTrip", () => {
       message: "No drivers available nearby. Please try again in a few minutes.",
     });
   });
+  it(
+    "suppresses confirmation when lifecycle changes after assignment",
+    async () => {
+      mocks.findNearbyDrivers.mockResolvedValue([
+        { driverId: "driver-1" },
+      ]);
+
+      mocks.getJobTimeout.mockReturnValue(10);
+
+      mocks.assignTripToDriver.mockResolvedValue({
+        driver: {
+          id: "driver-1",
+          vehicleType: "MOTO",
+          licensePlate: "GT-1",
+          user: {
+            name: "Driver",
+            phone: "0200000000",
+          },
+        },
+      });
+
+      // Simulate cancellation winning after the atomic assignment but before
+      // dispatch is allowed to tell the driver that the trip is confirmed.
+      mocks.tripFindUnique.mockResolvedValueOnce({
+        status: "CANCELLED",
+        driverId: "driver-1",
+      });
+
+      const dispatchPromise =
+        dispatchTrip("trip-1");
+
+      for (
+        let attempt = 0;
+        attempt < 20 &&
+        !ioMock.emissions.some(
+          (emission) =>
+            emission.event === "trip:offer"
+        );
+        attempt += 1
+      ) {
+        await new Promise((resolve) =>
+          setTimeout(resolve, 0)
+        );
+      }
+
+      const offer = ioMock.emissions.find(
+        (emission) =>
+          emission.event === "trip:offer"
+      )?.payload as {
+        offerId: string;
+      };
+
+      expect(offer?.offerId).toEqual(
+        expect.any(String)
+      );
+
+      const remoteResponseHandler =
+        ioMock.getServerSideHandler(
+          "dispatch:driver-response"
+        );
+
+      expect(remoteResponseHandler).toBeTypeOf(
+        "function"
+      );
+
+      remoteResponseHandler!({
+        tripId: "trip-1",
+        offerId: offer.offerId,
+        driverId: "driver-1",
+        response: "accept",
+      });
+
+      await expect(
+        dispatchPromise
+      ).resolves.toEqual({
+        status: "IN_PROGRESS",
+        reason:
+          "Trip lifecycle changed before driver confirmation",
+      });
+
+      expect(
+        mocks.assignTripToDriver
+      ).toHaveBeenCalled();
+
+      expect(
+        mocks.registerActiveTrip
+      ).toHaveBeenCalledWith(
+        "driver-1",
+        "trip-1"
+      );
+
+      expect(
+        mocks.unregisterActiveTripIfCurrent
+      ).toHaveBeenCalledTimes(1);
+
+      expect(
+        mocks.unregisterActiveTripIfCurrent
+      ).toHaveBeenCalledWith(
+        "driver-1",
+        "trip-1"
+      );
+
+      expect(
+        mocks.unregisterActiveTrip
+      ).not.toHaveBeenCalled();
+
+      expect(
+        ioMock.emissions.some(
+          (emission) =>
+            emission.event ===
+            "trip:confirmed"
+        )
+      ).toBe(false);
+    }
+  );
 });

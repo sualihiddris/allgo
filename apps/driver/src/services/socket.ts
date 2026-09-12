@@ -149,6 +149,16 @@ class SocketService {
     this.on("trip:accept:failed", callback);
     return () => this.off("trip:accept:failed", callback);
   }
+  onTripCancelled(
+    callback: (data: {
+      tripId: string;
+      reason?: string;
+    }) => void
+  ): () => void {
+    this.on("trip:cancelled", callback);
+    return () =>
+      this.off("trip:cancelled", callback);
+  }
 }
 
 export const socketService = new SocketService();
