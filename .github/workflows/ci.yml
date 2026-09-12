@@ -1,0 +1,139 @@
+name: AllGo CI
+
+on:
+  pull_request:
+    branches:
+      - main
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  validate:
+    name: Validate AllGo
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    services:
+      mysql:
+        image: mysql:8.0
+
+        env:
+          MYSQL_ROOT_PASSWORD: root
+          MYSQL_DATABASE: allgo_e2e
+
+        ports:
+          - 3306:3306
+
+        options: >-
+          --health-cmd="mysqladmin ping -h 127.0.0.1 -proot"
+          --health-interval=5s
+          --health-timeout=5s
+          --health-retries=20
+
+    env:
+      NODE_ENV: test
+
+      DATABASE_URL: mysql://root:root@127.0.0.1:3306/allgo_e2e
+
+      # E2E intentionally uses AllGo's MemoryStore.
+      # Do not point CI at shared or production Redis.
+      REDIS_URL: ""
+
+      # Disposable CI-only values.
+      # These are not production credentials.
+      JWT_SECRET: ci-jwt-secret-not-for-production
+
+      JWT_ACCESS_SECRET: ci-access-secret-0123456789abcdefghijklmnopqrstuvwxyz
+      JWT_REFRESH_SECRET: ci-refresh-secret-0123456789abcdefghijklmnopqrstuvwxyz
+      JWT_TOTP_SECRET: ci-totp-secret-0123456789abcdefghijklmnopqrstuvwxyz
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: package-lock.json
+
+      - name: Show runtime versions
+        run: |
+          node --version
+          npm --version
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Generate Prisma client
+        run: npm --workspace @allgo/server run db:generate
+
+      - name: Validate Prisma schema
+        working-directory: server
+        run: npx prisma validate
+
+      - name: Apply migrations to isolated CI database
+        working-directory: server
+        run: npx prisma migrate deploy
+
+      - name: Verify migration status
+        working-directory: server
+        run: npx prisma migrate status
+
+      - name: Create isolated E2E environment
+        shell: bash
+        run: |
+          cat > server/.env.e2e <<'EOF'
+          NODE_ENV=test
+          DATABASE_URL=mysql://root:root@127.0.0.1:3306/allgo_e2e
+          REDIS_URL=
+
+          JWT_SECRET=ci-jwt-secret-not-for-production
+          JWT_ACCESS_SECRET=ci-access-secret-0123456789abcdefghijklmnopqrstuvwxyz
+          JWT_REFRESH_SECRET=ci-refresh-secret-0123456789abcdefghijklmnopqrstuvwxyz
+          JWT_TOTP_SECRET=ci-totp-secret-0123456789abcdefghijklmnopqrstuvwxyz
+          EOF
+
+      - name: Typecheck all workspaces
+        run: npm run typecheck
+
+      - name: Run server unit tests
+        run: npm --workspace @allgo/server test
+
+      - name: Run trip lifecycle E2E tests
+        run: npm --workspace @allgo/server run test:e2e
+
+      - name: Build server
+        run: npm --workspace @allgo/server run build
+
+      - name: Check PR diff whitespace
+        if: github.event_name == 'pull_request'
+        run: |
+          git diff --check "${{ github.event.pull_request.base.sha }}...HEAD"
+
+      - name: Check pushed commit whitespace
+        if: github.event_name == 'push'
+        run: |
+          git diff --check HEAD^..HEAD
+
+      - name: Verify CI did not modify tracked files
+        run: |
+          if [ -n "$(git status --porcelain --untracked-files=no)" ]; then
+            echo "CI unexpectedly modified tracked repository files:"
+            git status --short
+            exit 1
+          fi
+
+          echo "Tracked repository files remain clean."
