@@ -127,12 +127,12 @@ class SocketService {
     this.emit("driver:location", location);
   }
 
-  acceptTrip(tripId: string) {
-    this.emit("trip:accept", tripId);
+  acceptTrip(tripId: string, offerId: string) {
+    this.emit("trip:accept", { tripId, offerId });
   }
 
-  declineTrip(tripId: string) {
-    this.emit("trip:decline", tripId);
+  declineTrip(tripId: string, offerId: string) {
+    this.emit("trip:decline", { tripId, offerId });
   }
 
   onTripOffer(callback: (offer: any) => void): () => void {
@@ -148,6 +148,16 @@ class SocketService {
   onTripAcceptFailed(callback: (data: any) => void): () => void {
     this.on("trip:accept:failed", callback);
     return () => this.off("trip:accept:failed", callback);
+  }
+  onTripCancelled(
+    callback: (data: {
+      tripId: string;
+      reason?: string;
+    }) => void
+  ): () => void {
+    this.on("trip:cancelled", callback);
+    return () =>
+      this.off("trip:cancelled", callback);
   }
 }
 

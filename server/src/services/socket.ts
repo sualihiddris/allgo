@@ -5,6 +5,7 @@
  */
 
 import { Server as HTTPServer } from "http";
+import { randomUUID } from "crypto";
 import { Server, Socket } from "socket.io";
 import { createAdapter } from "@socket.io/redis-adapter";
 import Redis from "ioredis";
@@ -21,7 +22,12 @@ import {
   isVehicleAllowedAtNight,
 } from "../services/dispatch";
 import { getTripById } from "../services/trip";
-import { startTripTracking, registerActiveTrip, unregisterActiveTrip, getActiveTripForDriver } from "../services/tracking";
+import {
+  startTripTracking,
+  registerActiveTrip,
+  unregisterActiveTripIfCurrent,
+  getActiveTripForDriver,
+} from "../services/tracking";
 import { sendPushNotification } from "../services/push";
 import { VehicleType } from "@prisma/client";
 import { prisma } from "../config/database";
@@ -42,6 +48,8 @@ interface AuthenticatedSocket extends Socket {
 
 let ioInstance: Server | null = null;
 
+const DISPATCH_CLAIM_LEASE_MS = 5 * 60 * 1000;
+
 export type DispatchTripResult =
   | {
       status: "ACCEPTED";
@@ -54,6 +62,7 @@ export type DispatchTripResult =
       };
     }
   | { status: "NO_DRIVERS"; message: string }
+  | { status: "IN_PROGRESS"; reason: string }
   | { status: "FAILED"; reason: string };
 
 // REST routes (e.g. tracking.ts) need to push events to a customer's room
@@ -67,17 +76,55 @@ export function getIO(): Server {
   return ioInstance;
 }
 
-// Pending job-offer responses, keyed by tripId - not by any specific socket
-// object. A driver's socket can disconnect/reconnect (new socket id) between
-// an offer being sent and the response arriving (e.g. woken by a push
-// notification after the app was backgrounded); resolution must work
-// regardless of which physical connection delivers the accept/decline.
-// Map.delete()'s return value (and the entry's absence) IS the "already
-// resolved" state - no separate boolean needed.
+type DriverOfferResponse = "accept" | "decline";
+
+interface DriverOfferReplyPayload {
+  tripId: string;
+  offerId: string;
+}
+
+interface DistributedDriverResponse extends DriverOfferReplyPayload {
+  driverId: string;
+  response: DriverOfferResponse;
+}
+
+// The Promise remains local to the dispatch owner, while responses can arrive
+// on any backend instance and are relayed through Socket.IO's Redis adapter.
+// offerId prevents an old response from resolving a newer offer for the same
+// trip and driver.
 const pendingResponses = new Map<
   string,
-  { driverId: string; resolve: (response: "accept" | "decline") => void }
+  {
+    tripId: string;
+    driverId: string;
+    resolve: (response: DriverOfferResponse) => void;
+  }
 >();
+
+function resolvePendingDriverResponse(event: DistributedDriverResponse): boolean {
+  const pending = pendingResponses.get(event.offerId);
+
+  if (
+    !pending ||
+    pending.tripId !== event.tripId ||
+    pending.driverId !== event.driverId
+  ) {
+    return false;
+  }
+
+  pending.resolve(event.response);
+  return true;
+}
+
+function relayDriverResponse(io: Server, event: DistributedDriverResponse): boolean {
+  const resolvedLocally = resolvePendingDriverResponse(event);
+
+  if (env.REDIS_URL) {
+    io.serverSideEmit("dispatch:driver-response", event);
+  }
+
+  return resolvedLocally;
+}
 
 const inFlightDispatches = new Map<string, Promise<DispatchTripResult>>();
 
@@ -100,6 +147,10 @@ export async function setupSocketIO(httpServer: HTTPServer): Promise<Server> {
     io.adapter(createAdapter(pubClient, subClient));
     console.log("✅ Socket.io Redis adapter attached");
   }
+
+  io.on("dispatch:driver-response", (event: DistributedDriverResponse) => {
+    resolvePendingDriverResponse(event);
+  });
 
   // Authentication middleware
   //
@@ -220,58 +271,166 @@ export async function setupSocketIO(httpServer: HTTPServer): Promise<Server> {
      * current tier is exhausted. See AllGO_Master_Plan.md Section 3.
      */
     socket.on("trip:dispatch", async (tripId: string) => {
-      const result = await dispatchTrip(tripId);
-      if (result.status === "ACCEPTED") {
-        socket.emit("trip:accepted", { tripId, driver: result.driver });
-      } else if (result.status === "NO_DRIVERS") {
-        socket.emit("trip:dispatch:no_drivers", { tripId, message: result.message });
-      } else {
-        socket.emit("trip:dispatch:failed", { tripId, reason: result.reason });
+      const rejectDispatch = () =>
+        socket.emit("trip:dispatch:failed", {
+          tripId,
+          reason: "Trip not found or unavailable",
+        });
+
+      // Authorization belongs at the socket boundary while the authenticated
+      // principal is still available. dispatchTrip() remains a trusted
+      // identity-agnostic engine for internal/admin call-in workflows.
+      if (
+        socket.role !== "CUSTOMER" ||
+        !socket.userId ||
+        typeof tripId !== "string" ||
+        !tripId.trim()
+      ) {
+        rejectDispatch();
+        return;
+      }
+
+      try {
+        const ownedTrip = await prisma.trip.findFirst({
+          where: {
+            id: tripId,
+            customer: {
+              userId: socket.userId,
+            },
+          },
+          select: {
+            id: true,
+          },
+        });
+
+        if (!ownedTrip) {
+          // Missing and unauthorized trip ids deliberately produce the same
+          // response so this event cannot be used as an existence oracle.
+          rejectDispatch();
+          return;
+        }
+
+        const result = await dispatchTrip(tripId);
+
+        if (result.status === "ACCEPTED") {
+          socket.emit("trip:accepted", {
+            tripId,
+            driver: result.driver,
+          });
+        } else if (result.status === "NO_DRIVERS") {
+          socket.emit("trip:dispatch:no_drivers", {
+            tripId,
+            message: result.message,
+          });
+        } else if (result.status === "FAILED") {
+          socket.emit("trip:dispatch:failed", {
+            tripId,
+            reason: result.reason,
+          });
+        }
+      } catch (error) {
+        console.error(
+          `[Dispatch] Failed to authorize customer dispatch for trip ${tripId}:`,
+          error
+        );
+        rejectDispatch();
       }
     });
 
     /**
-     * Driver accepts a trip - resolved via the tripId-keyed pendingResponses
-     * registry (not a per-socket listener), so this works correctly even if
-     * this socket is a reconnect (new id) that woke from a push notification
-     * after the original socket that received the offer had already died.
+     * Driver accepts a specific offer.
      */
-    socket.on("trip:accept", async (tripId: string) => {
+    socket.on("trip:accept", async (payload: DriverOfferReplyPayload) => {
       if (socket.role !== "DRIVER") return;
 
+      await socket.driverRoomReady;
+
+      const tripId = payload?.tripId;
+      const offerId = payload?.offerId;
+
+      if (
+        !socket.driverId ||
+        typeof tripId !== "string" ||
+        typeof offerId !== "string" ||
+        !tripId ||
+        !offerId
+      ) {
+        return socket.emit("trip:accept:failed", {
+          tripId,
+          offerId,
+          reason: "Offer expired or no longer available",
+        });
+      }
+
       try {
-        const pending = pendingResponses.get(tripId);
-        if (!pending || pending.driverId !== socket.driverId) {
+        const available = await isDriverAvailable(socket.driverId);
+
+        if (!available) {
           return socket.emit("trip:accept:failed", {
             tripId,
+            offerId,
+            reason: "Not available",
+          });
+        }
+
+        const resolvedLocally = relayDriverResponse(io, {
+          tripId,
+          offerId,
+          driverId: socket.driverId,
+          response: "accept",
+        });
+
+        if (!env.REDIS_URL && !resolvedLocally) {
+          return socket.emit("trip:accept:failed", {
+            tripId,
+            offerId,
             reason: "Offer expired or no longer available",
           });
         }
 
-        const available = await isDriverAvailable(socket.driverId!);
-
-        if (!available) {
-          return socket.emit("trip:accept:failed", { tripId, reason: "Not available" });
-        }
-
-        pending.resolve("accept");
-        socket.emit("trip:accept:received", { tripId });
+        socket.emit("trip:accept:received", { tripId, offerId });
       } catch (error) {
         console.error("Error accepting trip:", error);
+        socket.emit("trip:accept:failed", {
+          tripId,
+          offerId,
+          reason: "Unable to process response",
+        });
       }
     });
 
     /**
-     * Driver declines a trip
+     * Driver declines a specific offer.
      */
-    socket.on("trip:decline", (tripId: string) => {
+    socket.on("trip:decline", async (payload: DriverOfferReplyPayload) => {
       if (socket.role !== "DRIVER") return;
 
-      const pending = pendingResponses.get(tripId);
-      if (pending && pending.driverId === socket.driverId) {
-        pending.resolve("decline");
+      await socket.driverRoomReady;
+
+      const tripId = payload?.tripId;
+      const offerId = payload?.offerId;
+
+      if (
+        !socket.driverId ||
+        typeof tripId !== "string" ||
+        typeof offerId !== "string" ||
+        !tripId ||
+        !offerId
+      ) {
+        return;
       }
-      socket.emit("trip:decline:received", { tripId });
+
+      try {
+        relayDriverResponse(io, {
+          tripId,
+          offerId,
+          driverId: socket.driverId,
+          response: "decline",
+        });
+        socket.emit("trip:decline:received", { tripId, offerId });
+      } catch (error) {
+        console.error("Error declining trip:", error);
+      }
     });
 
     /**
@@ -333,7 +492,40 @@ export function dispatchTrip(tripId: string): Promise<DispatchTripResult> {
   return currentDispatch;
 }
 
+async function resolveDispatchOwnershipLoss(
+  tripId: string,
+  inProgressReason: string,
+  failedReason: string
+): Promise<DispatchTripResult> {
+  try {
+    const currentTrip = await getTripById(tripId);
+
+    if (
+      currentTrip?.status === "REQUESTED" &&
+      currentTrip.driverId === null &&
+      currentTrip.dispatchStatus === "SEARCHING"
+    ) {
+      return {
+        status: "IN_PROGRESS",
+        reason: inProgressReason,
+      };
+    }
+  } catch (error) {
+    console.error(
+      `[Dispatch] Failed to re-read trip ${tripId} after ownership loss:`,
+      error
+    );
+  }
+
+  return {
+    status: "FAILED",
+    reason: failedReason,
+  };
+}
+
 async function dispatchTripInternal(tripId: string): Promise<DispatchTripResult> {
+  let dispatchClaimToken: string | null = null;
+
   try {
     const io = getIO();
     const trip = await getTripById(tripId);
@@ -342,24 +534,83 @@ async function dispatchTripInternal(tripId: string): Promise<DispatchTripResult>
       return { status: "FAILED", reason: "Invalid trip" };
     }
 
+    const claimToken = randomUUID();
+    const claimedAt = new Date();
+    const staleBefore = new Date(
+      claimedAt.getTime() - DISPATCH_CLAIM_LEASE_MS
+    );
+
     const dispatchClaim = await prisma.trip.updateMany({
-      where: { id: tripId, status: "REQUESTED", driverId: null },
-      data: { dispatchStatus: "SEARCHING" },
+      where: {
+        id: tripId,
+        status: "REQUESTED",
+        driverId: null,
+        OR: [
+          { dispatchStatus: null },
+          { dispatchStatus: "NO_DRIVER_FOUND" },
+          { dispatchStatus: "FAILED" },
+          {
+            dispatchStatus: "SEARCHING",
+            OR: [
+              { dispatchClaimToken: null },
+              { dispatchClaimedAt: null },
+              { dispatchClaimedAt: { lt: staleBefore } },
+            ],
+          },
+        ],
+      },
+      data: {
+        dispatchStatus: "SEARCHING",
+        dispatchClaimToken: claimToken,
+        dispatchClaimedAt: claimedAt,
+      },
     });
+
     if (dispatchClaim.count === 0) {
-      return { status: "FAILED", reason: "Invalid trip" };
+      return resolveDispatchOwnershipLoss(
+        tripId,
+        "Trip dispatch is already in progress",
+        "Trip is no longer available for dispatch"
+      );
     }
 
-    const isNight = isNightServiceHours();
-    if (isNight && !isVehicleAllowedAtNight(trip.vehicleType)) {
-      await prisma.trip.updateMany({
-        where: { id: tripId, status: "REQUESTED", driverId: null },
-        data: { dispatchStatus: "NO_DRIVER_FOUND" },
+    dispatchClaimToken = claimToken;
+
+    const persistNoDrivers = async (
+      message: string
+    ): Promise<DispatchTripResult> => {
+      const noDriverPersist = await prisma.trip.updateMany({
+        where: {
+          id: tripId,
+          status: "REQUESTED",
+          driverId: null,
+          dispatchStatus: "SEARCHING",
+          dispatchClaimToken: claimToken,
+        },
+        data: {
+          dispatchStatus: "NO_DRIVER_FOUND",
+          dispatchClaimToken: null,
+          dispatchClaimedAt: null,
+        },
       });
-      return {
-        status: "NO_DRIVERS",
-        message: `${trip.vehicleType} service is not available during night hours (9pm-5am). Please try MOTO or KEKE.`,
-      };
+
+      if (noDriverPersist.count === 0) {
+        return resolveDispatchOwnershipLoss(
+          tripId,
+          "Trip dispatch ownership changed",
+          "Trip is no longer available for dispatch"
+        );
+      }
+
+      return { status: "NO_DRIVERS", message };
+    };
+
+    const isNight = isNightServiceHours();
+
+    if (isNight && !isVehicleAllowedAtNight(trip.vehicleType)) {
+      return persistNoDrivers(
+        `${trip.vehicleType} service is not available during night hours (9pm-5am). Please try MOTO or KEKE.`
+      );
     }
 
     const jobTimeoutSeconds = getJobTimeout();
@@ -381,8 +632,44 @@ async function dispatchTripInternal(tripId: string): Promise<DispatchTripResult>
         const available = await isDriverAvailable(candidate.driverId);
         if (!available) continue;
 
-        console.log(`[Dispatch] Trip ${tripId}: offering to driver ${candidate.driverId} (radius ${radius}m)`);
+        // Heartbeat immediately before an externally-visible offer.
+        // If another process reclaimed the lease while this dispatcher was
+        // paused, the token mismatch stops the stale owner here.
+        const heartbeat = await prisma.trip.updateMany({
+          where: {
+            id: tripId,
+            status: "REQUESTED",
+            driverId: null,
+            dispatchStatus: "SEARCHING",
+            dispatchClaimToken: claimToken,
+          },
+          data: {
+            dispatchClaimedAt: new Date(),
+          },
+        });
+
+        if (heartbeat.count === 0) {
+          return {
+            status: "IN_PROGRESS",
+            reason: "Trip dispatch ownership changed",
+          };
+        }
+
+        const offerId = randomUUID();
+
+        const responsePromise = waitForDriverResponse(
+          candidate.driverId,
+          tripId,
+          offerId,
+          jobTimeoutSeconds
+        );
+
+        console.log(
+          `[Dispatch] Trip ${tripId}: offering to driver ${candidate.driverId} (radius ${radius}m)`
+        );
+
         io.to(`driver:${candidate.driverId}`).emit("trip:offer", {
+          offerId,
           tripId: trip.id,
           vehicleType: trip.vehicleType,
           serviceType: trip.serviceType,
@@ -399,34 +686,79 @@ async function dispatchTripInternal(tripId: string): Promise<DispatchTripResult>
             address: trip.destAddress,
           },
           distance: trip.distanceMeters,
-          customerName: trip.customer?.user?.name || trip.callerName || "Customer",
-          customerPhone: trip.customer?.user?.phone || trip.callerPhone || "",
+          customerName:
+            trip.customer?.user?.name || trip.callerName || "Customer",
+          customerPhone:
+            trip.customer?.user?.phone || trip.callerPhone || "",
           customerNote: trip.customerNote,
           timeoutSeconds: jobTimeoutSeconds,
         });
 
-        const responsePromise = waitForDriverResponse(candidate.driverId, tripId, jobTimeoutSeconds);
         prisma.driver
-          .findUnique({ where: { id: candidate.driverId }, select: { pushToken: true } })
+          .findUnique({
+            where: { id: candidate.driverId },
+            select: { pushToken: true },
+          })
           .then((candidateDriver) => {
             if (candidateDriver?.pushToken) {
               return sendPushNotification(
                 candidateDriver.pushToken,
                 "New ride request nearby!",
                 "Open the app to view and respond.",
-                { tripId: trip.id }
+                { tripId: trip.id, offerId }
               );
             }
           })
-          .catch((error) => console.error("[Push] Failed to send job offer push:", error));
+          .catch((error) =>
+            console.error("[Push] Failed to send job offer push:", error)
+          );
 
         const response = await responsePromise;
-        console.log(`[Dispatch] Trip ${tripId}: driver ${candidate.driverId} responded "${response}"`);
+
+        console.log(
+          `[Dispatch] Trip ${tripId}: driver ${candidate.driverId} responded "${response}"`
+        );
 
         if (response === "accept") {
-          const updatedTrip = await assignTripToDriver(tripId, candidate.driverId);
+          const updatedTrip = await assignTripToDriver(
+            tripId,
+            candidate.driverId,
+            claimToken
+          );
+
           await registerActiveTrip(candidate.driverId, tripId);
-          io.to(`driver:${candidate.driverId}`).emit("trip:confirmed", { tripId });
+
+          // Assignment won its atomic database transition, but cancellation
+          // may have won while post-assignment work was awaiting. Check the
+          // authoritative row before telling the driver the trip is confirmed.
+          const confirmationState = await prisma.trip.findUnique({
+            where: { id: tripId },
+            select: {
+              status: true,
+              driverId: true,
+            },
+          });
+
+          if (
+            confirmationState?.status !== "ACCEPTED" ||
+            confirmationState.driverId !== candidate.driverId
+          ) {
+            await unregisterActiveTripIfCurrent(
+          candidate.driverId,
+          tripId
+        );
+
+            return {
+              status: "IN_PROGRESS",
+              reason: "Trip lifecycle changed before driver confirmation",
+            };
+          }
+
+          io.to(`driver:${candidate.driverId}`).emit("trip:confirmed", {
+            tripId,
+            offerId,
+          });
+
           return {
             status: "ACCEPTED",
             driver: {
@@ -444,53 +776,73 @@ async function dispatchTripInternal(tripId: string): Promise<DispatchTripResult>
     const message = isNight
       ? "No night service drivers available right now. Please try again in a few minutes."
       : "No drivers available nearby. Please try again in a few minutes.";
-    await prisma.trip.updateMany({
-      where: { id: tripId, status: "REQUESTED", driverId: null },
-      data: { dispatchStatus: "NO_DRIVER_FOUND" },
-    });
-    return { status: "NO_DRIVERS", message };
+
+    return persistNoDrivers(message);
   } catch (error) {
     console.error("Error dispatching trip:", error);
-    try {
-      await prisma.trip.updateMany({
-        where: { id: tripId, status: "REQUESTED", driverId: null },
-        data: { dispatchStatus: "FAILED" },
-      });
-    } catch (persistError) {
-      console.error("Error persisting failed dispatch status:", persistError);
+
+    if (dispatchClaimToken) {
+      try {
+        const failedPersist = await prisma.trip.updateMany({
+          where: {
+            id: tripId,
+            status: "REQUESTED",
+            driverId: null,
+            dispatchStatus: "SEARCHING",
+            dispatchClaimToken,
+          },
+          data: {
+            dispatchStatus: "FAILED",
+            dispatchClaimToken: null,
+            dispatchClaimedAt: null,
+          },
+        });
+
+        if (failedPersist.count === 0) {
+          return resolveDispatchOwnershipLoss(
+            tripId,
+            "Trip dispatch ownership changed",
+            "Server error"
+          );
+        }
+      } catch (persistError) {
+        console.error(
+          "Error persisting failed dispatch status:",
+          persistError
+        );
+      }
     }
+
     return { status: "FAILED", reason: "Server error" };
   }
 }
 
 /**
- * Wait for driver to accept or decline with timeout.
+ * Wait for one specific driver offer to resolve.
  *
- * Resolution is keyed by tripId via the module-level pendingResponses map,
- * not by a specific socket object - the driver's "trip:accept"/"trip:decline"
- * handlers (above, in the connection block) resolve whichever entry matches
- * their tripId, regardless of which physical socket connection delivers it.
- * This is what makes the push-notification wake-up path actually work: a
- * driver who reconnects under a brand new socket id after being woken by a
- * push can still have their accept/decline reach this promise.
+ * offerId is globally unique for each candidate attempt. The dispatcher that
+ * owns this Promise may be on a different backend instance from the socket
+ * connection that receives the driver's response.
  */
 function waitForDriverResponse(
   driverId: string,
   tripId: string,
+  offerId: string,
   timeoutSeconds: number
 ): Promise<"accept" | "decline" | "timeout"> {
   return new Promise((resolve) => {
     const timeout = setTimeout(() => {
-      if (pendingResponses.delete(tripId)) {
+      if (pendingResponses.delete(offerId)) {
         resolve("timeout");
       }
     }, timeoutSeconds * 1000);
 
-    pendingResponses.set(tripId, {
+    pendingResponses.set(offerId, {
+      tripId,
       driverId,
       resolve: (response) => {
         clearTimeout(timeout);
-        pendingResponses.delete(tripId);
+        pendingResponses.delete(offerId);
         resolve(response);
       },
     });

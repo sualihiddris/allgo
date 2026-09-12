@@ -5,7 +5,7 @@
  */
 
 import { prisma } from "../config/database";
-import { unregisterActiveTrip } from "./tracking";
+import { unregisterActiveTripIfCurrent } from "./tracking";
 
 // Valid status transitions for trips
 const TRIP_TRANSITIONS: Record<string, string[]> = {
@@ -97,14 +97,14 @@ export async function updateTripStatus(
       updateData.completedAt = new Date();
       // Unregister from location tracking
       if (trip.driverId) {
-        await unregisterActiveTrip(trip.driverId);
+        await unregisterActiveTripIfCurrent(trip.driverId, trip.id);
       }
       break;
     case "CANCELLED":
       updateData.cancelledBy = userId;
       // Unregister from location tracking
       if (trip.driverId) {
-        await unregisterActiveTrip(trip.driverId);
+        await unregisterActiveTripIfCurrent(trip.driverId, trip.id);
       }
       break;
   }

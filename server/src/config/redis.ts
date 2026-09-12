@@ -5,6 +5,16 @@ declare global {
   var __redis: Redis | undefined;
 }
 
+// Lua script for atomic compare-and-delete:
+// GET KEYS[1], compare with ARGV[1], DEL only on equality.
+// Returns 1 when the key was deleted, 0 otherwise.
+const COMPARE_AND_DELETE_SCRIPT = `
+if redis.call("GET", KEYS[1]) == ARGV[1] then
+  return redis.call("DEL", KEYS[1])
+end
+return 0
+`;
+
 // In-memory store for development without Redis
 class MemoryStore {
   private store = new Map<string, { value: string; expiry?: number }>();
@@ -127,6 +137,23 @@ class MemoryStore {
     return Math.max(0, item.expiry - Date.now());
   }
 
+  /**
+   * Atomic compare-and-delete against the Map.
+   * Honors expiration equivalently to the Lua path and performs the
+   * compare and delete with no await point in between.
+   */
+  async compareAndDelete(key: string, expected: string): Promise<boolean> {
+    const item = this.store.get(key);
+    if (!item) return false;
+    if (item.expiry && Date.now() > item.expiry) {
+      this.store.delete(key);
+      return false;
+    }
+    if (item.value !== expected) return false;
+    this.store.delete(key);
+    return true;
+  }
+
   async ping(): Promise<string> {
     return "PONG";
   }
@@ -167,6 +194,24 @@ if (!useMemoryStore) {
   (redis as Redis).on("connect", () => {
     console.log("✅ Redis connected");
   });
+}
+
+/**
+ * Atomically delete `key` only when its current value equals `expected`.
+ * Returns true when deletion occurred.
+ *
+ * Dispatch on the selected backend selector instead of re-reading env or
+ * sniffing for .eval:
+ * - MemoryStore: direct Map-backed compare-and-delete (no await between
+ *   comparison and deletion, expiry honored).
+ * - Real Redis: atomic Lua EVAL comparing GET(KEYS[1]) with ARGV[1].
+ */
+export async function compareAndDelete(key: string, expected: string): Promise<boolean> {
+  if (useMemoryStore) {
+    return (redis as MemoryStore).compareAndDelete(key, expected);
+  }
+  const result = await (redis as Redis).eval(COMPARE_AND_DELETE_SCRIPT, 1, key, expected);
+  return Number(result) === 1;
 }
 
 export async function connectRedis(): Promise<void> {

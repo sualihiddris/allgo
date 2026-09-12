@@ -724,81 +724,120 @@ router.post("/trips/call-in", requireAuth, requireAdmin, async (req, res) => {
     | Awaited<ReturnType<typeof findDriverWithExpansion>>
     | { success: false; message: string };
   let dispatchOutcome: "SEARCHING" | "NO_DRIVER_FOUND" | "FAILED" = "FAILED";
-  let dispatchCanStart = false;
-  try {
-    const dispatchClaim = await prisma.trip.updateMany({
-      where: { id: trip.id, status: "REQUESTED", driverId: null },
-      data: { dispatchStatus: "SEARCHING" },
-    });
-    if (dispatchClaim.count === 0) {
-      throw new Error("Trip is no longer available for dispatch");
-    }
-    dispatchCanStart = true;
-    dispatchOutcome = "SEARCHING";
-  } catch (error) {
-    console.error(`[Call-In] Failed to start dispatch for trip ${trip.id}:`, error);
-    try {
-      await prisma.trip.updateMany({
-        where: { id: trip.id, status: "REQUESTED", driverId: null },
-        data: { dispatchStatus: "FAILED" },
-      });
-    } catch (persistError) {
-      console.error(`[Call-In] Failed to persist dispatch status for trip ${trip.id}:`, persistError);
-    }
-  }
 
-  if (!dispatchCanStart) {
-    dispatchResult = {
-      success: false,
-      message: "Trip created successfully, but automatic driver dispatch failed.",
-    };
-  } else {
-    try {
-      dispatchResult = await findDriverWithExpansion(
-        pickupData.lat,
-        pickupData.lng,
-        vehicleType as VehicleType
-      );
-      if (dispatchResult.success && dispatchResult.driver) {
-        console.log(`[Call-In] Trip ${trip.id} found driver ${dispatchResult.driver.driverId}`);
-        void dispatchTrip(trip.id)
-          .then((result) => {
-            if (result.status === "ACCEPTED") {
-              console.log(`[Call-In] Trip ${trip.id} accepted by driver ${result.driver.id}`);
-            } else if (result.status === "NO_DRIVERS") {
-              console.log(`[Call-In] Real dispatch exhausted for trip ${trip.id}`);
-            } else {
-              console.error(`[Call-In] Real dispatch failed for trip ${trip.id}: ${result.reason}`);
-            }
-          })
-          .catch((error) => {
-            console.error(`[Call-In] Real dispatch failed for trip ${trip.id}:`, error);
-          });
-        console.log(`[Call-In] Real dispatch started for trip ${trip.id}`);
-      } else {
-        await prisma.trip.updateMany({
-          where: { id: trip.id, status: "REQUESTED", driverId: null },
-          data: { dispatchStatus: "NO_DRIVER_FOUND" },
+  const isDispatchAlreadySearching = async (): Promise<boolean> => {
+    const currentTrip = await prisma.trip.findUnique({
+      where: { id: trip.id },
+      select: {
+        status: true,
+        driverId: true,
+        dispatchStatus: true,
+      },
+    });
+
+    return (
+      currentTrip?.status === "REQUESTED" &&
+      currentTrip.driverId === null &&
+      currentTrip.dispatchStatus === "SEARCHING"
+    );
+  };
+
+  try {
+    dispatchResult = await findDriverWithExpansion(
+      pickupData.lat,
+      pickupData.lng,
+      vehicleType as VehicleType
+    );
+
+    if (dispatchResult.success && dispatchResult.driver) {
+      dispatchOutcome = "SEARCHING";
+      console.log(`[Call-In] Trip ${trip.id} found driver ${dispatchResult.driver.driverId}`);
+
+      void dispatchTrip(trip.id)
+        .then((result) => {
+          if (result.status === "ACCEPTED") {
+            console.log(`[Call-In] Trip ${trip.id} accepted by driver ${result.driver.id}`);
+          } else if (result.status === "NO_DRIVERS") {
+            console.log(`[Call-In] Real dispatch exhausted for trip ${trip.id}`);
+          } else if (result.status === "IN_PROGRESS") {
+            console.log(`[Call-In] Dispatch already in progress for trip ${trip.id}`);
+          } else {
+            console.error(`[Call-In] Real dispatch failed for trip ${trip.id}: ${result.reason}`);
+          }
+        })
+        .catch((error) => {
+          console.error(`[Call-In] Real dispatch failed for trip ${trip.id}:`, error);
         });
+
+      console.log(`[Call-In] Real dispatch started for trip ${trip.id}`);
+    } else {
+      const noDriverPersist = await prisma.trip.updateMany({
+        where: {
+          id: trip.id,
+          status: "REQUESTED",
+          driverId: null,
+          OR: [
+            { dispatchStatus: null },
+            { dispatchStatus: "NO_DRIVER_FOUND" },
+            { dispatchStatus: "FAILED" },
+          ],
+        },
+        data: { dispatchStatus: "NO_DRIVER_FOUND" },
+      });
+
+      if (noDriverPersist.count > 0) {
         dispatchOutcome = "NO_DRIVER_FOUND";
         console.log(`[Call-In] No driver available for trip ${trip.id}`);
+      } else if (await isDispatchAlreadySearching()) {
+        dispatchOutcome = "SEARCHING";
+        dispatchResult = {
+          success: false,
+          message: "Driver dispatch is already in progress.",
+        };
+        console.log(`[Call-In] Dispatch already in progress for trip ${trip.id}`);
+      } else {
+        dispatchOutcome = "FAILED";
+        dispatchResult = {
+          success: false,
+          message: "Trip is no longer available for automatic dispatch.",
+        };
       }
-    } catch (error) {
-      console.error(`[Call-In] Dispatch failed for trip ${trip.id}:`, error);
-      try {
-        await prisma.trip.updateMany({
-          where: { id: trip.id, status: "REQUESTED", driverId: null },
-          data: { dispatchStatus: "FAILED" },
-        });
-      } catch (persistError) {
-        console.error(`[Call-In] Failed to persist dispatch status for trip ${trip.id}:`, persistError);
-      }
-      dispatchOutcome = "FAILED";
-      dispatchResult = {
-        success: false,
-        message: "Trip created successfully, but automatic driver dispatch failed.",
-      };
     }
+  } catch (error) {
+    console.error(`[Call-In] Dispatch failed for trip ${trip.id}:`, error);
+
+    try {
+      const failedPersist = await prisma.trip.updateMany({
+        where: {
+          id: trip.id,
+          status: "REQUESTED",
+          driverId: null,
+          OR: [
+            { dispatchStatus: null },
+            { dispatchStatus: "NO_DRIVER_FOUND" },
+            { dispatchStatus: "FAILED" },
+          ],
+        },
+        data: { dispatchStatus: "FAILED" },
+      });
+
+      if (failedPersist.count === 0 && await isDispatchAlreadySearching()) {
+        dispatchOutcome = "SEARCHING";
+      } else {
+        dispatchOutcome = "FAILED";
+      }
+    } catch (persistError) {
+      console.error(`[Call-In] Failed to persist dispatch status for trip ${trip.id}:`, persistError);
+      dispatchOutcome = "FAILED";
+    }
+
+    dispatchResult = {
+      success: false,
+      message:
+        dispatchOutcome === "SEARCHING"
+          ? "Driver dispatch is already in progress."
+          : "Trip created successfully, but automatic driver dispatch failed.",
+    };
   }
 
   return res.status(201).json({

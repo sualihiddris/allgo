@@ -111,6 +111,7 @@ describe("POST /api/v1/admin/trips/call-in", () => {
     });
     mocks.dispatchTrip.mockResolvedValue({ status: "NO_DRIVERS", message: "exhausted" });
     mocks.tripUpdateMany.mockResolvedValue({ count: 1 });
+    mocks.tripFindUnique.mockResolvedValue(null);
   });
 
   it("returns the existing creation error when createTrip fails", async () => {
@@ -123,17 +124,14 @@ describe("POST /api/v1/admin/trips/call-in", () => {
     expect(mocks.tripUpdateMany).not.toHaveBeenCalled();
   });
 
-  it("starts dispatch after a successful driver pre-check and returns SEARCHING", async () => {
+  it("starts dispatch after a successful driver pre-check without pre-claiming SEARCHING", async () => {
     const response = await request(app).post("/api/v1/admin/trips/call-in").send(callInPayload);
 
     expect(response.status).toBe(201);
     expect(response.body.dispatch.status).toBe("SEARCHING");
     expect(mocks.dispatchTrip).toHaveBeenCalledTimes(1);
     expect(mocks.dispatchTrip).toHaveBeenCalledWith(createdTrip.id);
-    expect(mocks.tripUpdateMany).toHaveBeenCalledWith({
-      where: { id: createdTrip.id, status: "REQUESTED", driverId: null },
-      data: { dispatchStatus: "SEARCHING" },
-    });
+    expect(mocks.tripUpdateMany).not.toHaveBeenCalled();
   });
 
   describe("Admin effective driver presence", () => {
@@ -217,42 +215,69 @@ describe("POST /api/v1/admin/trips/call-in", () => {
     });
   });
 
-  it("returns the created trip as FAILED when SEARCHING persistence fails", async () => {
-    mocks.tripUpdateMany.mockRejectedValueOnce(new Error("database unavailable"));
+  it("preserves an existing SEARCHING dispatch when no-driver persistence loses the race", async () => {
+    mocks.findDriverWithExpansion.mockResolvedValue({
+      success: false,
+      message: "No driver found",
+    });
+    mocks.tripUpdateMany.mockResolvedValueOnce({ count: 0 });
+    mocks.tripFindUnique.mockResolvedValue({
+      status: "REQUESTED",
+      driverId: null,
+      dispatchStatus: "SEARCHING",
+    });
 
     const response = await request(app).post("/api/v1/admin/trips/call-in").send(callInPayload);
 
     expect(response.status).toBe(201);
-    expect(response.body.trip.id).toBe(createdTrip.id);
-    expect(response.body.dispatch.status).toBe("FAILED");
+    expect(response.body.dispatch.status).toBe("SEARCHING");
     expect(response.body.dispatch.message).toBe(
-      "Trip created successfully, but automatic driver dispatch failed."
+      "Driver dispatch is already in progress."
     );
-    expect(mocks.findDriverWithExpansion).not.toHaveBeenCalled();
     expect(mocks.dispatchTrip).not.toHaveBeenCalled();
-    expect(mocks.tripUpdateMany).toHaveBeenNthCalledWith(1, {
-      where: { id: createdTrip.id, status: "REQUESTED", driverId: null },
-      data: { dispatchStatus: "SEARCHING" },
+    expect(mocks.tripUpdateMany).toHaveBeenCalledWith({
+      where: {
+        id: createdTrip.id,
+        status: "REQUESTED",
+        driverId: null,
+        OR: [
+          { dispatchStatus: null },
+          { dispatchStatus: "NO_DRIVER_FOUND" },
+          { dispatchStatus: "FAILED" },
+        ],
+      },
+      data: { dispatchStatus: "NO_DRIVER_FOUND" },
     });
-    expect(mocks.tripUpdateMany).toHaveBeenNthCalledWith(2, {
-      where: { id: createdTrip.id, status: "REQUESTED", driverId: null },
-      data: { dispatchStatus: "FAILED" },
+    expect(mocks.tripFindUnique).toHaveBeenCalledWith({
+      where: { id: createdTrip.id },
+      select: {
+        status: true,
+        driverId: true,
+        dispatchStatus: true,
+      },
     });
   });
 
-  it("does not start discovery when the SEARCHING claim loses the lifecycle race", async () => {
+  it("does not report SEARCHING when no-driver persistence loses to a lifecycle change", async () => {
+    mocks.findDriverWithExpansion.mockResolvedValue({
+      success: false,
+      message: "No driver found",
+    });
     mocks.tripUpdateMany.mockResolvedValueOnce({ count: 0 });
+    mocks.tripFindUnique.mockResolvedValue({
+      status: "ACCEPTED",
+      driverId: "driver-1",
+      dispatchStatus: null,
+    });
 
     const response = await request(app).post("/api/v1/admin/trips/call-in").send(callInPayload);
 
     expect(response.status).toBe(201);
     expect(response.body.dispatch.status).toBe("FAILED");
-    expect(mocks.findDriverWithExpansion).not.toHaveBeenCalled();
+    expect(response.body.dispatch.message).toBe(
+      "Trip is no longer available for automatic dispatch."
+    );
     expect(mocks.dispatchTrip).not.toHaveBeenCalled();
-    expect(mocks.tripUpdateMany).toHaveBeenNthCalledWith(1, {
-      where: { id: createdTrip.id, status: "REQUESTED", driverId: null },
-      data: { dispatchStatus: "SEARCHING" },
-    });
   });
 
   it("does not start dispatch when the pre-check finds no driver", async () => {
@@ -267,7 +292,16 @@ describe("POST /api/v1/admin/trips/call-in", () => {
     expect(response.body.dispatch.status).toBe("NO_DRIVER_FOUND");
     expect(mocks.dispatchTrip).not.toHaveBeenCalled();
     expect(mocks.tripUpdateMany).toHaveBeenCalledWith({
-      where: { id: createdTrip.id, status: "REQUESTED", driverId: null },
+      where: {
+        id: createdTrip.id,
+        status: "REQUESTED",
+        driverId: null,
+        OR: [
+          { dispatchStatus: null },
+          { dispatchStatus: "NO_DRIVER_FOUND" },
+          { dispatchStatus: "FAILED" },
+        ],
+      },
       data: { dispatchStatus: "NO_DRIVER_FOUND" },
     });
   });
@@ -360,6 +394,38 @@ describe("POST /api/v1/admin/trips/call-in", () => {
     expect(mocks.dispatchTrip).toHaveBeenCalledWith(createdTrip.id);
   });
 
+  it("preserves an existing SEARCHING dispatch when FAILED persistence loses the race", async () => {
+    mocks.findDriverWithExpansion.mockRejectedValue(new Error("dispatch unavailable"));
+    mocks.tripUpdateMany.mockResolvedValueOnce({ count: 0 });
+    mocks.tripFindUnique.mockResolvedValue({
+      status: "REQUESTED",
+      driverId: null,
+      dispatchStatus: "SEARCHING",
+    });
+
+    const response = await request(app).post("/api/v1/admin/trips/call-in").send(callInPayload);
+
+    expect(response.status).toBe(201);
+    expect(response.body.dispatch.status).toBe("SEARCHING");
+    expect(response.body.dispatch.message).toBe(
+      "Driver dispatch is already in progress."
+    );
+    expect(mocks.dispatchTrip).not.toHaveBeenCalled();
+    expect(mocks.tripUpdateMany).toHaveBeenCalledWith({
+      where: {
+        id: createdTrip.id,
+        status: "REQUESTED",
+        driverId: null,
+        OR: [
+          { dispatchStatus: null },
+          { dispatchStatus: "NO_DRIVER_FOUND" },
+          { dispatchStatus: "FAILED" },
+        ],
+      },
+      data: { dispatchStatus: "FAILED" },
+    });
+  });
+
   it("persists FAILED when the driver pre-check throws", async () => {
     mocks.findDriverWithExpansion.mockRejectedValue(new Error("dispatch unavailable"));
 
@@ -369,7 +435,16 @@ describe("POST /api/v1/admin/trips/call-in", () => {
     expect(response.body.dispatch.status).toBe("FAILED");
     expect(mocks.dispatchTrip).not.toHaveBeenCalled();
     expect(mocks.tripUpdateMany).toHaveBeenCalledWith({
-      where: { id: createdTrip.id, status: "REQUESTED", driverId: null },
+      where: {
+        id: createdTrip.id,
+        status: "REQUESTED",
+        driverId: null,
+        OR: [
+          { dispatchStatus: null },
+          { dispatchStatus: "NO_DRIVER_FOUND" },
+          { dispatchStatus: "FAILED" },
+        ],
+      },
       data: { dispatchStatus: "FAILED" },
     });
   });

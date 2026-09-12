@@ -6,6 +6,7 @@ type DeliveryType = "FOOD" | "GROCERIES" | "PARCELS" | "OTHER";
 
 interface JobOffer {
   tripId: string;
+  offerId: string;
   vehicleType: VehicleType;
   serviceType: ServiceType;
   deliveryType?: DeliveryType;
@@ -27,7 +28,7 @@ interface JobOffer {
   expiresAt: number;
 }
 
-interface ActiveJob {
+export interface ActiveJob {
   id: string;
   vehicleType: VehicleType;
   serviceType: ServiceType;
