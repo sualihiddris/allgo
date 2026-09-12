@@ -17,6 +17,7 @@ const mocks = vi.hoisted(() => ({
   driverFindUnique: vi.fn(),
   tripUpdateMany: vi.fn(),
   tripFindUnique: vi.fn(),
+  tripFindFirst: vi.fn(),
 }));
 
 const config = vi.hoisted(() => ({
@@ -33,6 +34,7 @@ vi.mock("../config/database", () => ({
     trip: {
       updateMany: mocks.tripUpdateMany,
       findUnique: mocks.tripFindUnique,
+      findFirst: mocks.tripFindFirst,
     },
   },
 }));
@@ -113,6 +115,9 @@ describe("dispatchTrip", () => {
     mocks.registerActiveTrip.mockResolvedValue(undefined);
     mocks.unregisterActiveTrip.mockResolvedValue(undefined);
     mocks.unregisterActiveTripIfCurrent.mockResolvedValue(true);
+    mocks.tripFindFirst.mockResolvedValue({
+      id: "trip-1",
+    });
     mocks.getTripById.mockResolvedValue({
       id: "trip-1",
       status: "REQUESTED",
@@ -840,6 +845,150 @@ describe("dispatchTrip", () => {
     await expect(dispatchPromise).resolves.toMatchObject({ status: "ACCEPTED" });
   });
 
+
+  it("rejects dispatch for a trip not owned by the authenticated customer", async () => {
+    mocks.tripFindFirst.mockResolvedValue(null);
+
+    const handlers: Record<
+      string,
+      (payload: any) => Promise<void>
+    > = {};
+
+    const customerSocket = {
+      role: "CUSTOMER",
+      userId: "customer-2",
+      join: vi.fn(),
+      emit: vi.fn(),
+      on: (
+        event: string,
+        handler: (tripId: string) => Promise<void>
+      ) => {
+        handlers[event] = handler;
+      },
+    };
+
+    ioMock.getConnectionHandler()!(customerSocket);
+
+    await handlers["trip:dispatch"]("trip-1");
+
+    expect(
+      customerSocket.emit
+    ).toHaveBeenCalledWith(
+      "trip:dispatch:failed",
+      {
+        tripId: "trip-1",
+        reason: "Trip not found or unavailable",
+      }
+    );
+
+    expect(
+      mocks.tripFindFirst
+    ).toHaveBeenCalledWith({
+      where: {
+        id: "trip-1",
+        customer: {
+          userId: "customer-2",
+        },
+      },
+      select: {
+        id: true,
+      },
+    });
+
+    expect(
+      mocks.findNearbyDrivers
+    ).not.toHaveBeenCalled();
+
+    expect(
+      mocks.tripUpdateMany
+    ).not.toHaveBeenCalled();
+  });
+
+  it("rejects trip dispatch from a non-customer socket before database authorization", async () => {
+    const handlers: Record<
+      string,
+      (payload: any) => Promise<void>
+    > = {};
+
+    const adminSocket = {
+      role: "ADMIN",
+      userId: "admin-user-1",
+      join: vi.fn(),
+      emit: vi.fn(),
+      on: (
+        event: string,
+        handler: (tripId: string) => Promise<void>
+      ) => {
+        handlers[event] = handler;
+      },
+    };
+
+    ioMock.getConnectionHandler()!(adminSocket);
+
+    await handlers["trip:dispatch"]("trip-1");
+
+    expect(
+      adminSocket.emit
+    ).toHaveBeenCalledWith(
+      "trip:dispatch:failed",
+      {
+        tripId: "trip-1",
+        reason: "Trip not found or unavailable",
+      }
+    );
+
+    expect(
+      mocks.tripFindFirst
+    ).not.toHaveBeenCalled();
+
+    expect(
+      mocks.findNearbyDrivers
+    ).not.toHaveBeenCalled();
+  });
+
+  it("rejects malformed trip ids before the ownership lookup", async () => {
+    const handlers: Record<
+      string,
+      (payload: any) => Promise<void>
+    > = {};
+
+    const customerSocket = {
+      role: "CUSTOMER",
+      userId: "customer-1",
+      join: vi.fn(),
+      emit: vi.fn(),
+      on: (
+        event: string,
+        handler: (tripId: string) => Promise<void>
+      ) => {
+        handlers[event] = handler;
+      },
+    };
+
+    ioMock.getConnectionHandler()!(customerSocket);
+
+    await handlers["trip:dispatch"]("   ");
+
+    expect(
+      customerSocket.emit
+    ).toHaveBeenCalledWith(
+      "trip:dispatch:failed",
+      {
+        tripId: "   ",
+        reason: "Trip not found or unavailable",
+      }
+    );
+
+    expect(
+      mocks.tripFindFirst
+    ).not.toHaveBeenCalled();
+
+    expect(
+      mocks.findNearbyDrivers
+    ).not.toHaveBeenCalled();
+  });
+
+
   it("maps NO_DRIVERS to the customer dispatch event", async () => {
     mocks.findNearbyDrivers.mockResolvedValue([]);
     const handlers: Record<string, (payload: any) => Promise<void>> = {};
@@ -855,6 +1004,18 @@ describe("dispatchTrip", () => {
     ioMock.getConnectionHandler()!(customerSocket);
 
     await handlers["trip:dispatch"]("trip-1");
+
+    expect(mocks.tripFindFirst).toHaveBeenCalledWith({
+      where: {
+        id: "trip-1",
+        customer: {
+          userId: "customer-1",
+        },
+      },
+      select: {
+        id: true,
+      },
+    });
 
     expect(customerSocket.emit).toHaveBeenCalledWith("trip:dispatch:no_drivers", {
       tripId: "trip-1",

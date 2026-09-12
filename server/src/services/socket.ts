@@ -271,13 +271,69 @@ export async function setupSocketIO(httpServer: HTTPServer): Promise<Server> {
      * current tier is exhausted. See AllGO_Master_Plan.md Section 3.
      */
     socket.on("trip:dispatch", async (tripId: string) => {
-      const result = await dispatchTrip(tripId);
-      if (result.status === "ACCEPTED") {
-        socket.emit("trip:accepted", { tripId, driver: result.driver });
-      } else if (result.status === "NO_DRIVERS") {
-        socket.emit("trip:dispatch:no_drivers", { tripId, message: result.message });
-      } else if (result.status === "FAILED") {
-        socket.emit("trip:dispatch:failed", { tripId, reason: result.reason });
+      const rejectDispatch = () =>
+        socket.emit("trip:dispatch:failed", {
+          tripId,
+          reason: "Trip not found or unavailable",
+        });
+
+      // Authorization belongs at the socket boundary while the authenticated
+      // principal is still available. dispatchTrip() remains a trusted
+      // identity-agnostic engine for internal/admin call-in workflows.
+      if (
+        socket.role !== "CUSTOMER" ||
+        !socket.userId ||
+        typeof tripId !== "string" ||
+        !tripId.trim()
+      ) {
+        rejectDispatch();
+        return;
+      }
+
+      try {
+        const ownedTrip = await prisma.trip.findFirst({
+          where: {
+            id: tripId,
+            customer: {
+              userId: socket.userId,
+            },
+          },
+          select: {
+            id: true,
+          },
+        });
+
+        if (!ownedTrip) {
+          // Missing and unauthorized trip ids deliberately produce the same
+          // response so this event cannot be used as an existence oracle.
+          rejectDispatch();
+          return;
+        }
+
+        const result = await dispatchTrip(tripId);
+
+        if (result.status === "ACCEPTED") {
+          socket.emit("trip:accepted", {
+            tripId,
+            driver: result.driver,
+          });
+        } else if (result.status === "NO_DRIVERS") {
+          socket.emit("trip:dispatch:no_drivers", {
+            tripId,
+            message: result.message,
+          });
+        } else if (result.status === "FAILED") {
+          socket.emit("trip:dispatch:failed", {
+            tripId,
+            reason: result.reason,
+          });
+        }
+      } catch (error) {
+        console.error(
+          `[Dispatch] Failed to authorize customer dispatch for trip ${tripId}:`,
+          error
+        );
+        rejectDispatch();
       }
     });
 

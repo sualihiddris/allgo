@@ -118,7 +118,14 @@ router.get(
     try {
       const trip = await getTripById(req.params.id);
 
-      if (!trip) {
+      if (
+        !trip ||
+        req.user!.role !== "CUSTOMER" ||
+        trip.customer?.user.id !== req.user!.id
+      ) {
+        // Return the same response for missing and unauthorized trips so
+        // this customer-facing endpoint cannot be used as an existence
+        // oracle for other customers' trip ids.
         return res.status(404).json({
           success: false,
           error: {

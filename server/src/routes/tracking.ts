@@ -41,11 +41,13 @@ router.get(
         include: {
           customer: {
             select: {
+              userId: true,
               user: { select: { name: true, phone: true } },
             },
           },
           driver: {
             select: {
+              userId: true,
               user: { select: { name: true, phone: true } },
               vehicleType: true,
               licensePlate: true,
@@ -57,6 +59,22 @@ router.get(
 
       if (!trip) {
         return res.status(404).json({ error: { message: "Trip not found" } });
+      }
+
+      // Trip ids are identifiers, not authorization.
+      // Only the owning customer or currently assigned driver may read
+      // tracking details. Use the same 404 for absent and unauthorized
+      // trips so this endpoint cannot be used as an existence oracle.
+      const userId = req.user!.id;
+      const isCustomerOwner =
+        trip.customer?.userId === userId;
+      const isAssignedDriver =
+        trip.driver?.userId === userId;
+
+      if (!isCustomerOwner && !isAssignedDriver) {
+        return res.status(404).json({
+          error: { message: "Trip not found" },
+        });
       }
 
       sendSuccess(res, {
@@ -118,6 +136,14 @@ router.put(
   requireAuth,
   async (req: Request, res: Response, next: NextFunction) => {
     try {
+      if (req.user!.role !== "DRIVER") {
+        return res.status(403).json({
+          error: {
+            message: "Not authorized to update this trip",
+          },
+        });
+      }
+
       const { status, location, cancelReason } = statusUpdateSchema.parse(
         req.body
       );

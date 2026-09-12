@@ -33,15 +33,11 @@ router.post(
   async (req: Request, res: Response, next: NextFunction) => {
     try {
       const input = createFeedbackSchema.parse(req.body);
-      const customerId = req.user!.id;
+      const userId = req.user!.id;
 
-      // Verify trip exists and belongs to this customer
-      const trip = await prisma.trip.findUnique({
-        where: { id: input.tripId },
-        include: { customer: true },
-      });
-
-      if (!trip) {
+      // Missing, unauthorized and non-customer requests intentionally
+      // share the same response to avoid exposing trip existence.
+      if (req.user!.role !== "CUSTOMER") {
         return res.status(404).json({
           success: false,
           error: {
@@ -51,13 +47,21 @@ router.post(
         });
       }
 
-      // Verify customer owns this trip (call-in trips have no customer)
-      if (!trip.customer || trip.customer.userId !== customerId) {
-        return res.status(403).json({
+      const trip = await prisma.trip.findFirst({
+        where: {
+          id: input.tripId,
+          customer: {
+            userId,
+          },
+        },
+      });
+
+      if (!trip) {
+        return res.status(404).json({
           success: false,
           error: {
-            code: "FORBIDDEN",
-            message: "You can only submit feedback for your own trips",
+            code: "NOT_FOUND",
+            message: "Trip not found",
           },
         });
       }
@@ -114,8 +118,25 @@ router.get(
   requireAuth,
   async (req: Request, res: Response, next: NextFunction) => {
     try {
-      const feedback = await prisma.feedback.findUnique({
-        where: { tripId: req.params.tripId },
+      if (req.user!.role !== "CUSTOMER") {
+        return res.status(404).json({
+          success: false,
+          error: {
+            code: "NOT_FOUND",
+            message: "Feedback not found for this trip",
+          },
+        });
+      }
+
+      const feedback = await prisma.feedback.findFirst({
+        where: {
+          tripId: req.params.tripId,
+          trip: {
+            customer: {
+              userId: req.user!.id,
+            },
+          },
+        },
       });
 
       if (!feedback) {

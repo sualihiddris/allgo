@@ -5,16 +5,22 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const mocks = vi.hoisted(() => ({
   customerFindUnique: vi.fn(),
   tripFindFirst: vi.fn(),
+  getTripById: vi.fn(),
   cancelTrip: vi.fn(),
   unregisterActiveTripIfCurrent: vi.fn(),
   unregisterActiveTrip: vi.fn(),
   ioTo: vi.fn(),
   ioEmit: vi.fn(),
+  authUser: {
+    id: "customer-user-1",
+    phone: "0241000001",
+    role: "CUSTOMER",
+  },
 }));
 
 vi.mock("../middleware/auth", () => ({
   requireAuth: (req: Request, _res: Response, next: NextFunction) => {
-    req.user = { id: "customer-user-1", phone: "0241000001", role: "CUSTOMER" };
+    req.user = { ...mocks.authUser };
     next();
   },
 }));
@@ -32,7 +38,7 @@ vi.mock("../config/database", () => ({
 
 vi.mock("../services/trip", () => ({
   createTrip: vi.fn(),
-  getTripById: vi.fn(),
+  getTripById: mocks.getTripById,
   cancelTrip: mocks.cancelTrip,
 }));
 
@@ -52,6 +58,12 @@ import { bookingRouter } from "./booking";
 const app = express();
 app.use(express.json());
 app.use("/api/v1/bookings", bookingRouter);
+
+beforeEach(() => {
+  mocks.authUser.id = "customer-user-1";
+  mocks.authUser.phone = "0241000001";
+  mocks.authUser.role = "CUSTOMER";
+});
 
 const activeTrip = {
   id: "trip-newest",
@@ -74,6 +86,135 @@ const activeTrip = {
     user: { name: "Kwame Driver", phone: "0241234567" },
   },
 };
+
+
+const bookingDetailTrip = {
+  id: "trip-detail-1",
+  status: "ACCEPTED",
+  customerId: "customer-1",
+  driverId: "driver-1",
+  vehicleType: "MOTO",
+  serviceType: "PASSENGER",
+  deliveryType: null,
+  itemDescription: null,
+  pickupLat: 5.301832,
+  pickupLng: -1.9930466,
+  pickupAddress: "Tarkwa Market",
+  destLat: 5.31,
+  destLng: -1.98,
+  destAddress: "Tarkwa Station",
+  customerNote: "Call on arrival",
+  distanceMeters: 1500,
+  callerName: null,
+  callerPhone: null,
+  customer: {
+    id: "customer-1",
+    userId: "customer-user-1",
+    user: {
+      id: "customer-user-1",
+      phone: "0241000001",
+      name: "Customer One",
+    },
+  },
+  driver: {
+    id: "driver-1",
+    userId: "driver-user-1",
+    user: {
+      id: "driver-user-1",
+      phone: "0242000001",
+      name: "Driver One",
+    },
+  },
+  feedback: null,
+};
+
+describe("GET /api/v1/bookings/trip/:id", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mocks.getTripById.mockResolvedValue(
+      bookingDetailTrip
+    );
+  });
+
+  it("allows the owning customer to read the trip", async () => {
+    const response = await request(app).get(
+      "/api/v1/bookings/trip/trip-detail-1"
+    );
+
+    expect(response.status).toBe(200);
+    expect(response.body.data.trip.id).toBe(
+      "trip-detail-1"
+    );
+
+    expect(
+      mocks.getTripById
+    ).toHaveBeenCalledWith(
+      "trip-detail-1"
+    );
+  });
+
+  it("returns 404 to another customer", async () => {
+    mocks.authUser.id = "customer-user-2";
+
+    const response = await request(app).get(
+      "/api/v1/bookings/trip/trip-detail-1"
+    );
+
+    expect(response.status).toBe(404);
+    expect(response.body).toEqual({
+      success: false,
+      error: {
+        code: "NOT_FOUND",
+        message: "Trip not found",
+      },
+    });
+  });
+
+  it("returns 404 to a non-customer role", async () => {
+    mocks.authUser.id = "driver-user-1";
+    mocks.authUser.role = "DRIVER";
+
+    const response = await request(app).get(
+      "/api/v1/bookings/trip/trip-detail-1"
+    );
+
+    expect(response.status).toBe(404);
+  });
+
+  it("returns 404 for a call-in trip with no customer owner", async () => {
+    mocks.getTripById.mockResolvedValue({
+      ...bookingDetailTrip,
+      customerId: null,
+      customer: null,
+      callerName: "Ama Caller",
+      callerPhone: "0243000001",
+    });
+
+    const response = await request(app).get(
+      "/api/v1/bookings/trip/call-in-trip"
+    );
+
+    expect(response.status).toBe(404);
+  });
+
+  it("returns the same 404 when the trip does not exist", async () => {
+    mocks.getTripById.mockResolvedValue(null);
+
+    const response = await request(app).get(
+      "/api/v1/bookings/trip/missing-trip"
+    );
+
+    expect(response.status).toBe(404);
+    expect(response.body).toEqual({
+      success: false,
+      error: {
+        code: "NOT_FOUND",
+        message: "Trip not found",
+      },
+    });
+  });
+});
+
 
 describe("GET /api/v1/bookings/trips/active", () => {
   beforeEach(() => {

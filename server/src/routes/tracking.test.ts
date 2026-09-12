@@ -11,11 +11,15 @@ const mocks = vi.hoisted(() => ({
   to: vi.fn(),
   unregisterActiveTrip: vi.fn(),
   unregisterActiveTripIfCurrent: vi.fn(),
+  authUser: {
+    id: "driver-user-1",
+    role: "DRIVER",
+  },
 }));
 
 vi.mock("../middleware", () => ({
   requireAuth: (req: any, _res: any, next: () => void) => {
-    req.user = { id: "driver-user-1", role: "DRIVER" };
+    req.user = { ...mocks.authUser };
     next();
   },
 }));
@@ -50,6 +54,11 @@ const app = express();
 app.use(express.json());
 app.use("/api/v1/tracking", trackingRouter);
 
+beforeEach(() => {
+  mocks.authUser.id = "driver-user-1";
+  mocks.authUser.role = "DRIVER";
+});
+
 const trip = {
   id: "trip-1",
   driverId: "driver-1",
@@ -60,7 +69,164 @@ const trip = {
   },
 };
 
+
+const trackingTripDetails = {
+  id: "trip-detail-1",
+  serviceType: "PASSENGER",
+  deliveryType: null,
+  itemDescription: null,
+  vehicleType: "MOTO",
+  status: "ACCEPTED",
+  source: "APP",
+  pickupLat: 5.301832,
+  pickupLng: -1.9930466,
+  pickupAddress: "Tarkwa Market",
+  destLat: 5.31,
+  destLng: -1.98,
+  destAddress: "Tarkwa Station",
+  customerNote: "Call on arrival",
+  distanceMeters: 1500,
+  callerName: null,
+  callerPhone: null,
+  createdAt: new Date("2026-09-12T07:00:00.000Z"),
+  acceptedAt: new Date("2026-09-12T07:02:00.000Z"),
+  startedAt: null,
+  completedAt: null,
+  customer: {
+    userId: "customer-user-1",
+    user: {
+      name: "E2E Customer",
+      phone: "0509000001",
+    },
+  },
+  driver: {
+    userId: "driver-user-1",
+    user: {
+      name: "E2E Driver",
+      phone: "0509000002",
+    },
+    vehicleType: "MOTO",
+    licensePlate: "E2E-0001",
+    lastLocation: JSON.stringify({
+      lat: 5.302,
+      lng: -1.992,
+    }),
+  },
+};
+
+describe("GET /api/v1/tracking/trip/:id", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mocks.tripFindUnique.mockResolvedValue(
+      trackingTripDetails
+    );
+  });
+
+  it("allows the assigned driver to read trip details", async () => {
+    const response = await request(app).get(
+      "/api/v1/tracking/trip/trip-detail-1"
+    );
+
+    expect(response.status).toBe(200);
+    expect(response.body.data.trip).toMatchObject({
+      id: "trip-detail-1",
+      status: "ACCEPTED",
+      customer: {
+        name: "E2E Customer",
+        phone: "0509000001",
+      },
+      driver: {
+        name: "E2E Driver",
+        phone: "0509000002",
+      },
+    });
+  });
+
+  it("allows the owning customer to read trip details", async () => {
+    mocks.authUser.id = "customer-user-1";
+    mocks.authUser.role = "CUSTOMER";
+
+    const response = await request(app).get(
+      "/api/v1/tracking/trip/trip-detail-1"
+    );
+
+    expect(response.status).toBe(200);
+    expect(response.body.data.trip.id).toBe(
+      "trip-detail-1"
+    );
+  });
+
+  it("returns 404 to an unrelated authenticated user", async () => {
+    mocks.authUser.id = "unrelated-user";
+    mocks.authUser.role = "CUSTOMER";
+
+    const response = await request(app).get(
+      "/api/v1/tracking/trip/trip-detail-1"
+    );
+
+    expect(response.status).toBe(404);
+    expect(response.body).toEqual({
+      error: {
+        message: "Trip not found",
+      },
+    });
+  });
+
+  it("returns the same 404 when the trip does not exist", async () => {
+    mocks.tripFindUnique.mockResolvedValue(null);
+
+    const response = await request(app).get(
+      "/api/v1/tracking/trip/missing-trip"
+    );
+
+    expect(response.status).toBe(404);
+    expect(response.body).toEqual({
+      error: {
+        message: "Trip not found",
+      },
+    });
+  });
+});
+
+
 describe("PUT /api/v1/tracking/trip/:id/status", () => {
+
+  it("rejects a non-driver role before reading or mutating the trip", async () => {
+    vi.clearAllMocks();
+
+    mocks.authUser.id = "customer-user-1";
+    mocks.authUser.role = "CUSTOMER";
+
+    const response = await request(app)
+      .put("/api/v1/tracking/trip/trip-1/status")
+      .send({
+        status: "STARTED",
+      });
+
+    expect(response.status).toBe(403);
+    expect(response.body).toEqual({
+      error: {
+        message: "Not authorized to update this trip",
+      },
+    });
+
+    expect(
+      mocks.tripFindUnique
+    ).not.toHaveBeenCalled();
+
+    expect(
+      mocks.tripUpdateMany
+    ).not.toHaveBeenCalled();
+
+    expect(
+      mocks.driverUpdate
+    ).not.toHaveBeenCalled();
+
+    expect(
+      mocks.emit
+    ).not.toHaveBeenCalled();
+  });
+
   beforeEach(() => {
     vi.clearAllMocks();
 
