@@ -12,6 +12,7 @@ const mocks = vi.hoisted(() => ({
   to: vi.fn(),
   unregisterActiveTrip: vi.fn(),
   unregisterActiveTripIfCurrent: vi.fn(),
+  parseStoredDriverLocation: vi.fn(),
   authUser: {
     id: "driver-user-1",
     role: "DRIVER",
@@ -48,6 +49,7 @@ vi.mock("../services/socket", () => ({
 vi.mock("../services/tracking", () => ({
   unregisterActiveTrip: mocks.unregisterActiveTrip,
   unregisterActiveTripIfCurrent: mocks.unregisterActiveTripIfCurrent,
+  parseStoredDriverLocation: mocks.parseStoredDriverLocation,
 }));
 
 import { trackingRouter } from "./tracking";
@@ -119,6 +121,10 @@ const trackingTripDetails = {
 describe("GET /api/v1/tracking/trip/:id", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mocks.parseStoredDriverLocation.mockReturnValue({
+      lat: 5.302,
+      lng: -1.992,
+    });
     mocks.tripFindUnique.mockResolvedValue(
       trackingTripDetails
     );
@@ -130,6 +136,12 @@ describe("GET /api/v1/tracking/trip/:id", () => {
     );
 
     expect(response.status).toBe(200);
+
+    expect(
+      mocks.parseStoredDriverLocation
+    ).toHaveBeenCalledWith(
+      trackingTripDetails.driver.lastLocation
+    );
     expect(response.body.data.trip).toMatchObject({
       id: "trip-detail-1",
       status: "ACCEPTED",
@@ -140,6 +152,10 @@ describe("GET /api/v1/tracking/trip/:id", () => {
       driver: {
         name: "E2E Driver",
         phone: "0509000002",
+        location: {
+          lat: 5.302,
+          lng: -1.992,
+        },
       },
     });
   });

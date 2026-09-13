@@ -14,6 +14,46 @@ import { redis, compareAndDelete } from "../config/redis";
 
 const ACTIVE_TRIP_PREFIX = "active_trip:";
 const ACTIVE_TRIP_TTL_SECONDS = 12 * 60 * 60; // 12h safety net in case unregister is ever missed
+export function parseStoredDriverLocation(
+  value: unknown
+): { lat: number; lng: number } | null {
+  if (typeof value !== "string" || !value.trim()) {
+    return null;
+  }
+
+  try {
+    const parsed: unknown = JSON.parse(value);
+
+    if (!parsed || typeof parsed !== "object") {
+      return null;
+    }
+
+    const location = parsed as {
+      lat?: unknown;
+      lng?: unknown;
+    };
+
+    if (
+      typeof location.lat !== "number" ||
+      !Number.isFinite(location.lat) ||
+      location.lat < -90 ||
+      location.lat > 90 ||
+      typeof location.lng !== "number" ||
+      !Number.isFinite(location.lng) ||
+      location.lng < -180 ||
+      location.lng > 180
+    ) {
+      return null;
+    }
+
+    return {
+      lat: location.lat,
+      lng: location.lng,
+    };
+  } catch {
+    return null;
+  }
+}
 
 /**
  * Register an active trip for a driver
@@ -137,7 +177,7 @@ export async function startTripTracking(
   }
 
   // Get driver's last known location
-  const driverLocation = trip.driver.lastLocation as { lat: number; lng: number } | null;
+  const driverLocation = parseStoredDriverLocation(trip.driver.lastLocation);
 
   return {
     trackingRoom: `tracking:trip:${tripId}`,
