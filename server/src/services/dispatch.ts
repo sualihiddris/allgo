@@ -37,7 +37,7 @@ import {
   getJobTimeout,
   DAY_SEARCH_RADII,
   DAY_JOB_TIMEOUT_SECONDS,
-} from "@allgo/shared/constants/nightService";
+} from "../../../shared/constants/nightService";
 
 // Types
 interface DriverLocation {

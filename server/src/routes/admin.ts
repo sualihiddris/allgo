@@ -12,7 +12,7 @@ import { prisma } from "../config/database";
 import { createTrip } from "../services/trip";
 import { findDriverWithExpansion, getDriverLocation, isNightServiceHours } from "../services/dispatch";
 import { dispatchTrip } from "../services/socket";
-import { isCallInHours, isVehicleAllowedAtNight } from "@allgo/shared/constants/nightService";
+import { isCallInHours, isVehicleAllowedAtNight } from "../../../shared/constants/nightService";
 import { VehicleType, ServiceType, DeliveryType, TripSource } from "@prisma/client";
 import { sendSms } from "../services/sms";
 import { generateTotpSecret, generateTotpQrCode, verifyTotpCode } from "../services/totp";
