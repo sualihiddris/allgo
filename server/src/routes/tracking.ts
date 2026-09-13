@@ -12,7 +12,10 @@ import { requireAuth } from "../middleware";
 import { prisma } from "../config";
 import { sendSuccess } from "../utils";
 import { getIO } from "../services/socket";
-import { unregisterActiveTripIfCurrent } from "../services/tracking";
+import {
+  parseStoredDriverLocation,
+  unregisterActiveTripIfCurrent,
+} from "../services/tracking";
 
 const router = Router();
 
@@ -112,7 +115,7 @@ router.get(
                 phone: trip.driver.user.phone,
                 vehicleType: trip.driver.vehicleType,
                 licensePlate: trip.driver.licensePlate,
-                location: trip.driver.lastLocation,
+                location: parseStoredDriverLocation(trip.driver.lastLocation),
               }
             : null,
           createdAt: trip.createdAt,

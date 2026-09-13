@@ -160,7 +160,36 @@ describe("active-trip cache reconciliation", () => {
       status: "ACTIVE",
       driver: {
         userId: "driver-user-1",
-        lastLocation: null,
+        lastLocation: JSON.stringify({ lat: 5.302, lng: -1.992, timestamp: "ignored" }),
+      },
+      customer: {
+        userId: "customer-user-1",
+      },
+    });
+
+    await expect(
+      startTripTracking(
+        {} as any,
+        "trip-1",
+        "customer-user-1"
+      )
+    ).resolves.toEqual({
+      trackingRoom: "tracking:trip:trip-1",
+      driverId: "driver-user-1",
+      currentLocation: {
+        lat: 5.302,
+        lng: -1.992,
+      },
+    });
+  });
+
+  it("returns null when the stored driver location is malformed", async () => {
+    mocks.tripFindUnique.mockResolvedValue({
+      id: "trip-1",
+      status: "ACTIVE",
+      driver: {
+        userId: "driver-user-1",
+        lastLocation: "{not-valid-json",
       },
       customer: {
         userId: "customer-user-1",
