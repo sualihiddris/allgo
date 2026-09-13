@@ -108,6 +108,23 @@ function normalizeLocationTimestamp(value: unknown): number | null {
   return null;
 }
 
+function isValidLatitude(value: unknown): value is number {
+  return (
+    typeof value === "number" &&
+    Number.isFinite(value) &&
+    value >= -90 &&
+    value <= 90
+  );
+}
+
+function isValidLongitude(value: unknown): value is number {
+  return (
+    typeof value === "number" &&
+    Number.isFinite(value) &&
+    value >= -180 &&
+    value <= 180
+  );
+}
 function normalizeDriverLocation(value: unknown): DriverLocation | null {
   if (!value || typeof value !== "object") return null;
 
@@ -115,10 +132,8 @@ function normalizeDriverLocation(value: unknown): DriverLocation | null {
   const timestamp = normalizeLocationTimestamp(location.timestamp);
 
   if (
-    typeof location.lat !== "number" ||
-    !Number.isFinite(location.lat) ||
-    typeof location.lng !== "number" ||
-    !Number.isFinite(location.lng) ||
+    !isValidLatitude(location.lat) ||
+    !isValidLongitude(location.lng) ||
     timestamp === null ||
     Date.now() - timestamp > DRIVER_LOCATION_MAX_AGE_MS
   ) {
@@ -140,6 +155,9 @@ export async function updateDriverLocation(
   lat: number,
   lng: number
 ): Promise<void> {
+  if (!isValidLatitude(lat) || !isValidLongitude(lng)) {
+    throw new Error("Invalid driver location");
+  }
   const key = `${DRIVER_LOCATION_PREFIX}${driverId}`;
   await redis.setex(
     key,
