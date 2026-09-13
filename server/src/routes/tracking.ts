@@ -265,16 +265,21 @@ router.put(
         });
       }
 
-      if (status === "COMPLETED") {
-        if (trip.driverId) {
-          // Trip-specific compare-and-delete: a delayed cleanup for this
-          // trip must never remove a newer active_trip mapping.
+      if (
+        (status === "COMPLETED" || status === "CANCELLED") &&
+        trip.driverId
+      ) {
+        // The authoritative database transition has already committed.
+        // Redis cleanup is secondary and must not turn that success
+        // into a failed lifecycle response.
+        try {
           await unregisterActiveTripIfCurrent(trip.driverId, tripId);
+        } catch (cleanupError) {
+          console.error(
+            `[Tracking] Failed to unregister active trip ${tripId}:`,
+            cleanupError
+          );
         }
-      }
-
-      if (status === "CANCELLED" && trip.driverId) {
-        await unregisterActiveTripIfCurrent(trip.driverId, tripId);
       }
 
       const updatedTrip =

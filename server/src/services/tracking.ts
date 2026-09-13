@@ -59,7 +59,41 @@ export async function unregisterActiveTripIfCurrent(driverId: string, tripId: st
  */
 export async function getActiveTripForDriver(driverId: string): Promise<string | undefined> {
   const tripId = await redis.get(`${ACTIVE_TRIP_PREFIX}${driverId}`);
-  return tripId ?? undefined;
+
+  if (!tripId) {
+    return undefined;
+  }
+
+  // Redis is only ephemeral state. MySQL remains authoritative for
+  // trip lifecycle and driver assignment.
+  const trip = await prisma.trip.findFirst({
+    where: {
+      id: tripId,
+      driverId,
+      status: {
+        in: ["ACCEPTED", "ACTIVE"],
+      },
+    },
+    select: {
+      id: true,
+    },
+  });
+
+  if (trip) {
+    return tripId;
+  }
+
+  // Self-heal stale cache state without risking deletion of a newer mapping.
+  try {
+    await unregisterActiveTripIfCurrent(driverId, tripId);
+  } catch (cleanupError) {
+    console.error(
+      `[Tracking] Failed to clean stale active trip ${tripId} for driver ${driverId}:`,
+      cleanupError
+    );
+  }
+
+  return undefined;
 }
 
 /**
@@ -93,9 +127,13 @@ export async function startTripTracking(
     throw new Error("No driver assigned to trip");
   }
 
-  // Verify customer owns this trip
+  // Verify ownership before exposing lifecycle information.
   if (trip.customer?.userId !== customerId) {
     throw new Error("Not authorized to track this trip");
+  }
+
+  if (!["ACCEPTED", "ACTIVE"].includes(trip.status)) {
+    throw new Error("Trip is not active");
   }
 
   // Get driver's last known location
