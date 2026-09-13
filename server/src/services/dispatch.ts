@@ -158,20 +158,26 @@ export async function updateDriverLocation(
   if (!isValidLatitude(lat) || !isValidLongitude(lng)) {
     throw new Error("Invalid driver location");
   }
+
+  const timestamp = Date.now();
   const key = `${DRIVER_LOCATION_PREFIX}${driverId}`;
   await redis.setex(
     key,
     DRIVER_LOCATION_TTL,
-    JSON.stringify({ lat, lng, timestamp: Date.now() })
+    JSON.stringify({ lat, lng, timestamp })
   );
 
   // Also update in database for persistence
-  await prisma.driver.update({
-    where: { id: driverId },
-    data: {
-      lastLocation: JSON.stringify({ lat, lng, timestamp: new Date().toISOString() }),
-    },
-  });
+  try {
+    await prisma.driver.update({
+      where: { id: driverId },
+      data: {
+        lastLocation: JSON.stringify({ lat, lng, timestamp: new Date(timestamp).toISOString() }),
+      },
+    });
+  } catch (error) {
+    console.warn(`[Dispatch] Failed to persist location for driver ${driverId}:`, error);
+  }
 }
 
 /**
@@ -179,15 +185,23 @@ export async function updateDriverLocation(
  */
 export async function getDriverLocation(driverId: string): Promise<DriverLocation | null> {
   const key = `${DRIVER_LOCATION_PREFIX}${driverId}`;
-  const cached = await redis.get(key);
+  let cached: string | null = null;
+
+  try {
+    cached = await redis.get(key);
+  } catch (error) {
+    console.warn(`[Dispatch] Failed to read cached location for driver ${driverId}:`, error);
+  }
 
   if (cached) {
     try {
       const parsed = JSON.parse(cached);
-      return normalizeDriverLocation(parsed);
+      const normalized = normalizeDriverLocation(parsed);
+      if (normalized) {
+        return normalized;
+      }
     } catch (error) {
       console.warn(`[Dispatch] Failed to parse cached location for driver ${driverId}:`, error);
-      return null;
     }
   }
 
@@ -203,7 +217,6 @@ export async function getDriverLocation(driverId: string): Promise<DriverLocatio
       return normalizeDriverLocation(parsed);
     } catch (error) {
       console.warn(`[Dispatch] Failed to parse stored location for driver ${driverId}:`, error);
-      return null;
     }
   }
 
