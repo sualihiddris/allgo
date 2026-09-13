@@ -400,6 +400,57 @@ describe("PUT /api/v1/tracking/trip/:id/status", () => {
   );
 
   it(
+    "returns successful COMPLETED response when active-trip cleanup rejects",
+    async () => {
+      mocks.unregisterActiveTripIfCurrent.mockRejectedValue(
+        new Error("redis unavailable")
+      );
+
+      mocks.tripFindUniqueOrThrow.mockResolvedValue({
+        id: "trip-1",
+        status: "COMPLETED",
+        startedAt: new Date(
+          "2026-09-07T10:00:00.000Z"
+        ),
+        completedAt: new Date(
+          "2026-09-07T10:30:00.000Z"
+        ),
+      });
+
+      const response = await request(app)
+        .put(
+          "/api/v1/tracking/trip/trip-1/status"
+        )
+        .send({
+          status: "COMPLETED",
+        });
+
+      expect(response.status).toBe(200);
+
+      expect(
+        mocks.unregisterActiveTripIfCurrent
+      ).toHaveBeenCalledWith(
+        "driver-1",
+        "trip-1"
+      );
+
+      expect(
+        response.body.data.trip
+      ).toMatchObject({
+        id: "trip-1",
+        status: "COMPLETED",
+      });
+
+      expect(mocks.emit).toHaveBeenCalledWith(
+        "trip:status",
+        {
+          tripId: "trip-1",
+          status: "COMPLETED",
+        }
+      );
+    }
+  );
+  it(
     "does not increment totalTrips when COMPLETED loses the lifecycle race",
     async () => {
       mocks.tripUpdateMany.mockResolvedValue({
