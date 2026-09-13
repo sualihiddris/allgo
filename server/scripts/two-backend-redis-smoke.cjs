@@ -58,6 +58,27 @@ function assert(condition, message) {
   }
 }
 
+function expectNoEvent(socket, event, timeoutMs = 1_000) {
+  return new Promise((resolve, reject) => {
+    const handler = (payload) => {
+      clearTimeout(timeout);
+      socket.off(event, handler);
+      reject(
+        new Error(
+          `Unexpected Socket.IO event "${event}": ${JSON.stringify(payload)}`
+        )
+      );
+    };
+
+    const timeout = setTimeout(() => {
+      socket.off(event, handler);
+      resolve();
+    }, timeoutMs);
+
+    socket.once(event, handler);
+  });
+}
+
 function delay(ms) {
   return new Promise((resolve) =>
     setTimeout(resolve, ms)
@@ -709,13 +730,6 @@ async function main() {
         15_000
       );
 
-    const acceptedPromise =
-      waitForEvent(
-        customerSocket,
-        "trip:accepted",
-        15_000
-      );
-
     customerSocket.emit(
       "trip:dispatch",
       tripId
@@ -740,7 +754,196 @@ async function main() {
     );
 
     console.log(
-      "\n7. Driver accepts on B; response must resolve dispatch on A..."
+      "\n7. Cancelling on A while the offer is outstanding..."
+    );
+
+    const offerCancelledPromise =
+      waitForEvent(
+        driverSocket,
+        "trip:offer:cancelled",
+        15_000
+      );
+
+    const cancelResponse =
+      await fetch(
+        `${baseUrlA}/api/v1/bookings/trip/${tripId}/cancel`,
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${customerToken}`,
+          },
+          body: JSON.stringify({
+            reason: "Two-backend requested cancellation",
+          }),
+        }
+      );
+
+    const cancelBody = await cancelResponse.json();
+
+    assert(
+      cancelResponse.status === 200,
+      `Cancellation failed: HTTP ${cancelResponse.status} ${JSON.stringify(cancelBody)}`
+    );
+
+    const offerCancelled = await offerCancelledPromise;
+
+    assert(
+      offerCancelled.tripId === tripId,
+      "Offer cancellation has wrong trip id"
+    );
+
+    assert(
+      offerCancelled.offerId === offer.offerId,
+      "Offer cancellation has wrong offer id"
+    );
+
+    assert(
+      offerCancelled.reason === "Two-backend requested cancellation",
+      "Offer cancellation has wrong reason"
+    );
+
+    const staleAcceptFailedPromise =
+      waitForEvent(
+        driverSocket,
+        "trip:accept:failed",
+        15_000
+      );
+
+    const noStaleAcceptReceived =
+      expectNoEvent(
+        driverSocket,
+        "trip:accept:received",
+        1_000
+      );
+
+    const noStaleConfirmation =
+      expectNoEvent(
+        driverSocket,
+        "trip:confirmed",
+        1_000
+      );
+
+    driverSocket.emit(
+      "trip:accept",
+      {
+        tripId,
+        offerId: offer.offerId,
+      }
+    );
+
+    const staleAcceptFailed = await staleAcceptFailedPromise;
+
+    assert(
+      staleAcceptFailed.tripId === tripId &&
+      staleAcceptFailed.offerId === offer.offerId,
+      "Stale accept failure has wrong correlation"
+    );
+
+    await Promise.all([
+      noStaleAcceptReceived,
+      noStaleConfirmation,
+    ]);
+
+    const cancelledTrip =
+      await prisma.trip.findUnique({
+        where: { id: tripId },
+      });
+
+    assert(
+      cancelledTrip?.status === "CANCELLED",
+      `Expected CANCELLED, got ${cancelledTrip?.status}`
+    );
+    assert(
+      cancelledTrip.driverId === null,
+      `Expected null driverId, got ${cancelledTrip.driverId}`
+    );
+    assert(
+      cancelledTrip.dispatchStatus === null &&
+      cancelledTrip.dispatchClaimToken === null &&
+      cancelledTrip.dispatchClaimedAt === null,
+      "Cancellation did not clear dispatch ownership"
+    );
+
+    assert(
+      (await redis.get(`active_trip:${DRIVER_ID}`)) === null,
+      "Cancelled trip left an active-trip mapping"
+    );
+
+    await delay(1_000);
+
+    const settledCancelledTrip =
+      await prisma.trip.findUnique({
+        where: { id: tripId },
+      });
+
+    assert(
+      settledCancelledTrip?.status === "CANCELLED" &&
+      settledCancelledTrip.driverId === null,
+      "Dispatch did not remain cancelled after stale accept"
+    );
+
+    console.log(
+      "PASS: cancellation revoked the cross-instance offer, rejected stale accept, and preserved CANCELLED state."
+    );
+
+    console.log(
+      "\n8. Creating a second trip to preserve the normal remote accept path..."
+    );
+
+    const secondCreateResponse =
+      await fetch(
+        `${baseUrlA}/api/v1/bookings/trip`,
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${customerToken}`,
+          },
+          body: JSON.stringify({
+            vehicleType: "MOTO",
+            serviceType: "PASSENGER",
+            pickup: PICKUP,
+            destination: DESTINATION,
+            customerNote: "Two-backend Redis accept preservation",
+          }),
+        }
+      );
+
+    const secondCreateBody = await secondCreateResponse.json();
+    assert(
+      secondCreateResponse.status === 201,
+      `Second trip creation failed: HTTP ${secondCreateResponse.status} ${JSON.stringify(secondCreateBody)}`
+    );
+
+    const secondTrip =
+      secondCreateBody.data?.trip ??
+      secondCreateBody.trip;
+    const secondTripId = secondTrip.id;
+
+    const secondOfferPromise =
+      waitForEvent(
+        driverSocket,
+        "trip:offer",
+        15_000
+      );
+
+    const acceptedPromise =
+      waitForEvent(
+        customerSocket,
+        "trip:accepted",
+        15_000
+      );
+
+    customerSocket.emit(
+      "trip:dispatch",
+      secondTripId
+    );
+
+    const secondOffer = await secondOfferPromise;
+
+    console.log(
+      "\n9. Driver accepts the second offer on B; response must resolve dispatch on A..."
     );
 
     const acceptReceivedPromise =
@@ -760,8 +963,8 @@ async function main() {
     driverSocket.emit(
       "trip:accept",
       {
-        tripId,
-        offerId: offer.offerId,
+        tripId: secondTripId,
+        offerId: secondOffer.offerId,
       }
     );
 
@@ -776,30 +979,30 @@ async function main() {
     ]);
 
     assert(
-      acceptReceived.tripId === tripId,
+      acceptReceived.tripId === secondTripId,
       "Driver acknowledgement has wrong trip id"
     );
 
     assert(
       acceptReceived.offerId ===
-        offer.offerId,
+        secondOffer.offerId,
       "Driver acknowledgement has wrong offer id"
     );
 
     assert(
-      confirmation.tripId === tripId,
+      confirmation.tripId === secondTripId,
       "Driver confirmation has wrong trip id"
     );
 
     assert(
       confirmation.offerId ===
-        offer.offerId,
+        secondOffer.offerId,
       "Driver confirmation has wrong offer id"
     );
 
     assert(
       customerAccepted.tripId ===
-        tripId,
+        secondTripId,
       "Customer acceptance has wrong trip id"
     );
 
@@ -820,7 +1023,7 @@ async function main() {
     const acceptedTrip =
       await prisma.trip.findUnique({
         where: {
-          id: tripId,
+        id: secondTripId,
         },
       });
 

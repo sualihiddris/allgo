@@ -77,6 +77,13 @@ export function getIO(): Server {
 }
 
 type DriverOfferResponse = "accept" | "decline";
+type PendingDriverOfferOutcome = DriverOfferResponse | "cancelled";
+type DriverOfferWaitResult = PendingDriverOfferOutcome | "timeout";
+
+interface DistributedTripCancellation {
+  tripId: string;
+  reason: string;
+}
 
 interface DriverOfferReplyPayload {
   tripId: string;
@@ -97,7 +104,8 @@ const pendingResponses = new Map<
   {
     tripId: string;
     driverId: string;
-    resolve: (response: DriverOfferResponse) => void;
+    offered: boolean;
+    resolve: (response: PendingDriverOfferOutcome) => void;
   }
 >();
 
@@ -116,14 +124,81 @@ function resolvePendingDriverResponse(event: DistributedDriverResponse): boolean
   return true;
 }
 
-function relayDriverResponse(io: Server, event: DistributedDriverResponse): boolean {
+function relayDriverResponse(
+  io: Server,
+  event: DistributedDriverResponse
+): Promise<boolean> {
   const resolvedLocally = resolvePendingDriverResponse(event);
 
-  if (env.REDIS_URL) {
-    io.serverSideEmit("dispatch:driver-response", event);
+  if (!env.REDIS_URL || resolvedLocally) {
+    return Promise.resolve(resolvedLocally);
   }
 
-  return resolvedLocally;
+  return new Promise((resolve) => {
+    io.serverSideEmit(
+      "dispatch:driver-response",
+      event,
+      (error: Error | null, remoteResolutions: boolean[] = []) => {
+        resolve(remoteResolutions.some(Boolean));
+      }
+    );
+  });
+}
+
+function revokePendingTripOffersLocally(
+  io: Server,
+  event: DistributedTripCancellation
+): number {
+  let revoked = 0;
+
+  for (const [offerId, pending] of pendingResponses) {
+    if (pending.tripId !== event.tripId) {
+      continue;
+    }
+
+    // If cancellation wins while the final DB fence is still
+    // awaiting, the offer exists internally but has never been
+    // shown to the driver. Resolve it silently in that case.
+    if (pending.offered) {
+      io.to(`driver:${pending.driverId}`).emit(
+        "trip:offer:cancelled",
+        {
+          tripId: event.tripId,
+          offerId,
+          reason: event.reason,
+        }
+      );
+    }
+
+    pending.resolve("cancelled");
+    revoked += 1;
+  }
+
+  return revoked;
+}
+
+export function revokePendingTripOffers(
+  tripId: string,
+  reason = "Customer cancelled"
+): number {
+  const io = getIO();
+
+  const event: DistributedTripCancellation = {
+    tripId,
+    reason,
+  };
+
+  const revokedLocally =
+    revokePendingTripOffersLocally(io, event);
+
+  if (env.REDIS_URL) {
+    io.serverSideEmit(
+      "dispatch:trip-cancelled",
+      event
+    );
+  }
+
+  return revokedLocally;
 }
 
 const inFlightDispatches = new Map<string, Promise<DispatchTripResult>>();
@@ -148,9 +223,24 @@ export async function setupSocketIO(httpServer: HTTPServer): Promise<Server> {
     console.log("✅ Socket.io Redis adapter attached");
   }
 
-  io.on("dispatch:driver-response", (event: DistributedDriverResponse) => {
-    resolvePendingDriverResponse(event);
-  });
+  io.on(
+    "dispatch:driver-response",
+    (
+      event: DistributedDriverResponse,
+      acknowledge?: (resolved: boolean) => void
+    ) => {
+      const resolved = resolvePendingDriverResponse(event);
+      acknowledge?.(resolved);
+      return resolved;
+    }
+  );
+
+  io.on(
+    "dispatch:trip-cancelled",
+    (event: DistributedTripCancellation) => {
+      revokePendingTripOffersLocally(io, event);
+    }
+  );
 
   // Authentication middleware
   //
@@ -373,14 +463,14 @@ export async function setupSocketIO(httpServer: HTTPServer): Promise<Server> {
           });
         }
 
-        const resolvedLocally = relayDriverResponse(io, {
+        const resolved = await relayDriverResponse(io, {
           tripId,
           offerId,
           driverId: socket.driverId,
           response: "accept",
         });
 
-        if (!env.REDIS_URL && !resolvedLocally) {
+        if (!resolved) {
           return socket.emit("trip:accept:failed", {
             tripId,
             offerId,
@@ -421,12 +511,21 @@ export async function setupSocketIO(httpServer: HTTPServer): Promise<Server> {
       }
 
       try {
-        relayDriverResponse(io, {
+        const resolved = await relayDriverResponse(io, {
           tripId,
           offerId,
           driverId: socket.driverId,
           response: "decline",
         });
+
+        if (!resolved) {
+          return socket.emit("trip:decline:failed", {
+            tripId,
+            offerId,
+            reason: "Offer expired or no longer available",
+          });
+        }
+
         socket.emit("trip:decline:received", { tripId, offerId });
       } catch (error) {
         console.error("Error declining trip:", error);
@@ -657,12 +756,51 @@ async function dispatchTripInternal(tripId: string): Promise<DispatchTripResult>
 
         const offerId = randomUUID();
 
+        // Register the pending offer before the final authoritative
+        // read. If cancellation commits while this read is awaiting,
+        // its local/distributed revocation can resolve this exact
+        // offer even though nothing has been shown to the driver yet.
         const responsePromise = waitForDriverResponse(
           candidate.driverId,
           tripId,
           offerId,
           jobTimeoutSeconds
         );
+
+        const stillDispatchable =
+          await prisma.trip.findFirst({
+            where: {
+              id: tripId,
+              status: "REQUESTED",
+              driverId: null,
+              dispatchStatus: "SEARCHING",
+              dispatchClaimToken: claimToken,
+            },
+            select: {
+              id: true,
+            },
+          });
+
+        const pendingOffer =
+          pendingResponses.get(offerId);
+
+        if (!stillDispatchable || !pendingOffer) {
+          // Ownership may have changed without a cancellation
+          // event reaching this process. Clean up the local timer
+          // and pending entry without notifying a driver who was
+          // never shown this offer.
+          pendingOffer?.resolve("cancelled");
+
+          return {
+            status: "IN_PROGRESS",
+            reason: "Trip dispatch ownership changed",
+          };
+        }
+
+        // No await occurs between this flag and the socket emit,
+        // so cancellation cannot interleave locally and produce a
+        // cancellation event for an offer the driver never saw.
+        pendingOffer.offered = true;
 
         console.log(
           `[Dispatch] Trip ${tripId}: offering to driver ${candidate.driverId} (radius ${radius}m)`
@@ -700,7 +838,13 @@ async function dispatchTripInternal(tripId: string): Promise<DispatchTripResult>
             select: { pushToken: true },
           })
           .then((candidateDriver) => {
-            if (candidateDriver?.pushToken) {
+            const activeOffer =
+              pendingResponses.get(offerId);
+
+            if (
+              candidateDriver?.pushToken &&
+              activeOffer?.offered
+            ) {
               return sendPushNotification(
                 candidateDriver.pushToken,
                 "New ride request nearby!",
@@ -718,6 +862,13 @@ async function dispatchTripInternal(tripId: string): Promise<DispatchTripResult>
         console.log(
           `[Dispatch] Trip ${tripId}: driver ${candidate.driverId} responded "${response}"`
         );
+
+        if (response === "cancelled") {
+          return {
+            status: "IN_PROGRESS",
+            reason: "Trip was cancelled during dispatch",
+          };
+        }
 
         if (response === "accept") {
           const updatedTrip = await assignTripToDriver(
@@ -829,7 +980,7 @@ function waitForDriverResponse(
   tripId: string,
   offerId: string,
   timeoutSeconds: number
-): Promise<"accept" | "decline" | "timeout"> {
+): Promise<DriverOfferWaitResult> {
   return new Promise((resolve) => {
     const timeout = setTimeout(() => {
       if (pendingResponses.delete(offerId)) {
@@ -840,6 +991,7 @@ function waitForDriverResponse(
     pendingResponses.set(offerId, {
       tripId,
       driverId,
+      offered: false,
       resolve: (response) => {
         clearTimeout(timeout);
         pendingResponses.delete(offerId);
