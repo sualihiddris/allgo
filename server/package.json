@@ -5,8 +5,8 @@
   "main": "src/server.ts",
   "scripts": {
     "dev": "ts-node-dev --respawn --transpile-only src/server.ts",
-    "build": "tsc",
-    "start": "node dist/server.js",
+    "build": "tsc -p tsconfig.build.json",
+    "start": "node dist/server/src/server.js",
     "typecheck": "tsc --noEmit",
     "lint": "echo \"todo: lint\"",
     "test": "vitest run",
