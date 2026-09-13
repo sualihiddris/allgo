@@ -151,11 +151,15 @@ export async function startTripTracking(
   tripId: string,
   customerId: string
 ): Promise<{ trackingRoom: string; driverId: string; currentLocation: { lat: number; lng: number } | null }> {
-  const trip = await prisma.trip.findUnique({
-    where: { id: tripId },
+  const trip = await prisma.trip.findFirst({
+    where: {
+      id: tripId,
+      customer: {
+        userId: customerId,
+      },
+    },
     include: {
       driver: true,
-      customer: true,
     },
   });
 
@@ -166,12 +170,6 @@ export async function startTripTracking(
   if (!trip.driver) {
     throw new Error("No driver assigned to trip");
   }
-
-  // Verify ownership before exposing lifecycle information.
-  if (trip.customer?.userId !== customerId) {
-    throw new Error("Not authorized to track this trip");
-  }
-
   if (!["ACCEPTED", "ACTIVE"].includes(trip.status)) {
     throw new Error("Trip is not active");
   }

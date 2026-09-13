@@ -4,14 +4,12 @@ const mocks = vi.hoisted(() => ({
   redisGet: vi.fn(),
   compareAndDelete: vi.fn(),
   tripFindFirst: vi.fn(),
-  tripFindUnique: vi.fn(),
 }));
 
 vi.mock("../config/database", () => ({
   prisma: {
     trip: {
       findFirst: mocks.tripFindFirst,
-      findUnique: mocks.tripFindUnique,
     },
   },
 }));
@@ -111,18 +109,8 @@ describe("active-trip cache reconciliation", () => {
     }
   });
 
-  it("checks customer ownership before exposing terminal trip state", async () => {
-    mocks.tripFindUnique.mockResolvedValue({
-      id: "trip-1",
-      status: "COMPLETED",
-      driver: {
-        userId: "driver-user-1",
-        lastLocation: null,
-      },
-      customer: {
-        userId: "customer-user-1",
-      },
-    });
+  it("returns not found when the trip is not owned by the customer", async () => {
+    mocks.tripFindFirst.mockResolvedValue(null);
 
     await expect(
       startTripTracking(
@@ -130,10 +118,39 @@ describe("active-trip cache reconciliation", () => {
         "trip-1",
         "unrelated-customer"
       )
-    ).rejects.toThrow("Not authorized to track this trip");
+    ).rejects.toThrow("Trip not found");
+
+    expect(
+      mocks.tripFindFirst
+    ).toHaveBeenCalledWith({
+      where: {
+        id: "trip-1",
+        customer: {
+          userId: "unrelated-customer",
+        },
+      },
+      include: {
+        driver: true,
+      },
+    });
+  });
+  it("still reports an unassigned driver to the owning customer", async () => {
+    mocks.tripFindFirst.mockResolvedValue({
+      id: "trip-1",
+      status: "REQUESTED",
+      driver: null,
+    });
+
+    await expect(
+      startTripTracking(
+        {} as any,
+        "trip-1",
+        "customer-user-1"
+      )
+    ).rejects.toThrow("No driver assigned to trip");
   });
   it("rejects starting live tracking for a terminal trip", async () => {
-    mocks.tripFindUnique.mockResolvedValue({
+    mocks.tripFindFirst.mockResolvedValue({
       id: "trip-1",
       status: "COMPLETED",
       driver: {
@@ -155,7 +172,7 @@ describe("active-trip cache reconciliation", () => {
   });
 
   it("allows tracking for an ACTIVE trip owned by the customer", async () => {
-    mocks.tripFindUnique.mockResolvedValue({
+    mocks.tripFindFirst.mockResolvedValue({
       id: "trip-1",
       status: "ACTIVE",
       driver: {
@@ -184,7 +201,7 @@ describe("active-trip cache reconciliation", () => {
   });
 
   it("returns null when the stored driver location is malformed", async () => {
-    mocks.tripFindUnique.mockResolvedValue({
+    mocks.tripFindFirst.mockResolvedValue({
       id: "trip-1",
       status: "ACTIVE",
       driver: {
