@@ -71,6 +71,37 @@ describe("driver location validation", () => {
     expect(
       Number.isNaN(Date.parse(databasePayload.timestamp))
     ).toBe(false);
+    expect(Date.parse(databasePayload.timestamp)).toBe(redisPayload.timestamp);
+  });
+
+  it("rejects a Redis failure without attempting MySQL persistence", async () => {
+    const redisError = new Error("Redis unavailable");
+    mocks.redisSetex.mockRejectedValue(redisError);
+
+    await expect(
+      updateDriverLocation("driver-1", 5.30233, -1.99255)
+    ).rejects.toBe(redisError);
+
+    expect(mocks.driverUpdate).not.toHaveBeenCalled();
+  });
+
+  it("resolves after Redis success when MySQL persistence fails", async () => {
+    const persistenceError = new Error("MySQL unavailable");
+    mocks.driverUpdate.mockRejectedValue(persistenceError);
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+
+    await expect(
+      updateDriverLocation("driver-1", 5.30233, -1.99255)
+    ).resolves.toBeUndefined();
+
+    expect(mocks.redisSetex).toHaveBeenCalledTimes(1);
+    expect(mocks.driverUpdate).toHaveBeenCalledTimes(1);
+    expect(warnSpy).toHaveBeenCalledWith(
+      "[Dispatch] Failed to persist location for driver driver-1:",
+      persistenceError
+    );
+    expect(mocks.redisGet).not.toHaveBeenCalled();
+    warnSpy.mockRestore();
   });
 
   it.each([
@@ -130,7 +161,7 @@ describe("driver location validation", () => {
     ).toHaveBeenCalledTimes(2);
   });
 
-  it("rejects an out-of-range location from Redis", async () => {
+  it("falls back to a valid fresh MySQL location when Redis location is out of range", async () => {
     mocks.redisGet.mockResolvedValue(
       JSON.stringify({
         lat: 91,
@@ -138,14 +169,129 @@ describe("driver location validation", () => {
         timestamp: Date.now(),
       })
     );
+    const timestamp = new Date().toISOString();
+    mocks.driverFindUnique.mockResolvedValue({
+      lastLocation: JSON.stringify({
+        lat: 5.3,
+        lng: -1.9,
+        timestamp,
+      }),
+    });
 
     await expect(
       getDriverLocation("driver-1")
-    ).resolves.toBeNull();
+    ).resolves.toEqual({
+      lat: 5.3,
+      lng: -1.9,
+      timestamp: Date.parse(timestamp),
+    });
 
     expect(
       mocks.driverFindUnique
-    ).not.toHaveBeenCalled();
+    ).toHaveBeenCalledTimes(1);
+  });
+
+  it("falls back to a valid fresh MySQL location when Redis JSON is malformed", async () => {
+    mocks.redisGet.mockResolvedValue("{not-json");
+    const timestamp = new Date().toISOString();
+    mocks.driverFindUnique.mockResolvedValue({
+      lastLocation: JSON.stringify({
+        lat: 5.3,
+        lng: -1.9,
+        timestamp,
+      }),
+    });
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+
+    await expect(
+      getDriverLocation("driver-1")
+    ).resolves.toEqual({
+      lat: 5.3,
+      lng: -1.9,
+      timestamp: Date.parse(timestamp),
+    });
+
+    expect(mocks.driverFindUnique).toHaveBeenCalledTimes(1);
+    warnSpy.mockRestore();
+  });
+
+  it("falls back to a valid fresh MySQL location when Redis location is stale", async () => {
+    mocks.redisGet.mockResolvedValue(
+      JSON.stringify({
+        lat: 5.3,
+        lng: -1.9,
+        timestamp: Date.now() - 5 * 60 * 1000 - 1,
+      })
+    );
+    const timestamp = new Date().toISOString();
+    mocks.driverFindUnique.mockResolvedValue({
+      lastLocation: JSON.stringify({
+        lat: 5.4,
+        lng: -1.8,
+        timestamp,
+      }),
+    });
+
+    await expect(
+      getDriverLocation("driver-1")
+    ).resolves.toEqual({
+      lat: 5.4,
+      lng: -1.8,
+      timestamp: Date.parse(timestamp),
+    });
+
+    expect(mocks.driverFindUnique).toHaveBeenCalledTimes(1);
+  });
+
+  it("falls back to a valid fresh MySQL location when Redis GET fails", async () => {
+    const redisError = new Error("Redis unavailable");
+    mocks.redisGet.mockRejectedValue(redisError);
+    const timestamp = new Date().toISOString();
+    mocks.driverFindUnique.mockResolvedValue({
+      lastLocation: JSON.stringify({
+        lat: 5.4,
+        lng: -1.8,
+        timestamp,
+      }),
+    });
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+
+    await expect(
+      getDriverLocation("driver-1")
+    ).resolves.toEqual({
+      lat: 5.4,
+      lng: -1.8,
+      timestamp: Date.parse(timestamp),
+    });
+
+    expect(mocks.driverFindUnique).toHaveBeenCalledTimes(1);
+    expect(warnSpy).toHaveBeenCalledWith(
+      "[Dispatch] Failed to read cached location for driver driver-1:",
+      redisError
+    );
+    warnSpy.mockRestore();
+  });
+
+  it("returns null when Redis GET fails and MySQL location is missing", async () => {
+    mocks.redisGet.mockRejectedValue(new Error("Redis unavailable"));
+
+    await expect(getDriverLocation("driver-1")).resolves.toBeNull();
+
+    expect(mocks.driverFindUnique).toHaveBeenCalledTimes(1);
+  });
+
+  it("logs Redis GET failures with the driver id and error", async () => {
+    const redisError = new Error("Redis connection lost");
+    mocks.redisGet.mockRejectedValue(redisError);
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+
+    await getDriverLocation("driver-1");
+
+    expect(warnSpy).toHaveBeenCalledWith(
+      "[Dispatch] Failed to read cached location for driver driver-1:",
+      redisError
+    );
+    warnSpy.mockRestore();
   });
 
   it("rejects an out-of-range location from the MySQL fallback", async () => {
@@ -182,5 +328,22 @@ describe("driver location validation", () => {
       lng: -1.99255,
       timestamp,
     });
+
+    expect(mocks.driverFindUnique).not.toHaveBeenCalled();
+  });
+
+  it("returns null when the MySQL fallback is stale", async () => {
+    mocks.redisGet.mockResolvedValue(null);
+    mocks.driverFindUnique.mockResolvedValue({
+      lastLocation: JSON.stringify({
+        lat: 5.3,
+        lng: -1.9,
+        timestamp: new Date(
+          Date.now() - 5 * 60 * 1000 - 1
+        ).toISOString(),
+      }),
+    });
+
+    await expect(getDriverLocation("driver-1")).resolves.toBeNull();
   });
 });
