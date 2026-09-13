@@ -112,7 +112,7 @@ describe("cancelTrip", () => {
   );
 
   it(
-    "rejects an authenticated customer who does not own the trip",
+    "returns the same not-found result when the trip belongs to another customer",
     async () => {
       mocks.tripUpdateMany.mockResolvedValue({
         count: 0,
@@ -129,8 +129,9 @@ describe("cancelTrip", () => {
           "customer-user-1"
         )
       ).rejects.toMatchObject({
-        statusCode: 403,
-        code: "FORBIDDEN",
+        statusCode: 404,
+        code: "TRIP_NOT_FOUND",
+        message: "Trip not found",
       });
 
       expect(
@@ -186,6 +187,7 @@ describe("cancelTrip", () => {
       ).rejects.toMatchObject({
         statusCode: 404,
         code: "TRIP_NOT_FOUND",
+        message: "Trip not found",
       });
     }
   );

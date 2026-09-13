@@ -156,10 +156,12 @@ export async function cancelTrip(
     }
 
     if (currentTrip.customerId !== customer.id) {
+      // Do not reveal whether a trip exists when it belongs to another
+      // customer. Missing and non-owned trips must be externally identical.
       throw createError(
-        "Not authorized to cancel this trip",
-        403,
-        "FORBIDDEN"
+        "Trip not found",
+        404,
+        "TRIP_NOT_FOUND"
       );
     }
 
