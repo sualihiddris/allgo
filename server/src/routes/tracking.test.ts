@@ -52,11 +52,13 @@ vi.mock("../services/tracking", () => ({
   parseStoredDriverLocation: mocks.parseStoredDriverLocation,
 }));
 
+import { errorHandler } from "../middleware/errorHandler";
 import { trackingRouter } from "./tracking";
 
 const app = express();
 app.use(express.json());
 app.use("/api/v1/tracking", trackingRouter);
+app.use(errorHandler);
 
 beforeEach(() => {
   mocks.authUser.id = "driver-user-1";
@@ -269,6 +271,34 @@ describe("PUT /api/v1/tracking/trip/:id/status", () => {
           },
         })
     );
+  });
+  it("rejects an out-of-range location before reading or mutating the trip", async () => {
+    const response = await request(app)
+      .put("/api/v1/tracking/trip/trip-1/status")
+      .send({
+        status: "STARTED",
+        location: {
+          lat: 91,
+          lng: -1.99,
+        },
+      });
+
+    expect(response.status).toBe(400);
+
+    expect(response.body).toMatchObject({
+      success: false,
+      error: {
+        code: "VALIDATION_ERROR",
+        message: "Invalid request data",
+      },
+    });
+
+    expect(mocks.tripFindUnique).not.toHaveBeenCalled();
+    expect(mocks.tripUpdateMany).not.toHaveBeenCalled();
+    expect(mocks.driverUpdate).not.toHaveBeenCalled();
+    expect(mocks.transaction).not.toHaveBeenCalled();
+    expect(mocks.to).not.toHaveBeenCalled();
+    expect(mocks.emit).not.toHaveBeenCalled();
   });
 
   it(

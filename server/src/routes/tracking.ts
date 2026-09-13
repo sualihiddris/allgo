@@ -23,8 +23,8 @@ const statusUpdateSchema = z.object({
   status: z.enum(["STARTED", "COMPLETED", "CANCELLED"]),
   location: z
     .object({
-      lat: z.number(),
-      lng: z.number(),
+      lat: z.number().finite().min(-90).max(90),
+      lng: z.number().finite().min(-180).max(180),
     })
     .optional(),
   cancelReason: z.string().optional(),
