@@ -11,6 +11,7 @@ const mocks = vi.hoisted(() => ({
   unregisterActiveTrip: vi.fn(),
   ioTo: vi.fn(),
   ioEmit: vi.fn(),
+  revokePendingTripOffers: vi.fn(),
   authUser: {
     id: "customer-user-1",
     phone: "0241000001",
@@ -46,6 +47,7 @@ vi.mock("../services/socket", () => ({
   getIO: () => ({
     to: mocks.ioTo,
   }),
+  revokePendingTripOffers: mocks.revokePendingTripOffers,
 }));
 
 vi.mock("../services/tracking", () => ({
@@ -338,6 +340,7 @@ describe("POST /api/v1/bookings/trip/:id/cancel", () => {
     vi.clearAllMocks();
     mocks.ioTo.mockReturnValue({ emit: mocks.ioEmit });
     mocks.unregisterActiveTripIfCurrent.mockResolvedValue(true);
+    mocks.revokePendingTripOffers.mockReturnValue(0);
   });
 
   it("calls unregisterActiveTripIfCurrent with exact driverId and tripId for an assigned trip", async () => {
@@ -356,6 +359,10 @@ describe("POST /api/v1/bookings/trip/:id/cancel", () => {
     expect(mocks.unregisterActiveTripIfCurrent).toHaveBeenCalledTimes(1);
     expect(mocks.unregisterActiveTripIfCurrent).toHaveBeenCalledWith("driver-1", "trip-cancel-1");
     expect(mocks.unregisterActiveTrip).not.toHaveBeenCalled();
+    expect(mocks.revokePendingTripOffers).toHaveBeenCalledWith(
+      "trip-cancel-1",
+      "Changed my mind"
+    );
   });
 
   it("returns the successful cancellation response even if cleanup rejects", async () => {
@@ -369,6 +376,24 @@ describe("POST /api/v1/bookings/trip/:id/cancel", () => {
     expect(response.status).toBe(200);
     expect(response.body.success).toBe(true);
     expect(response.body.data.trip).toEqual(cancelledTrip);
+  });
+
+  it("returns success when pending-offer revocation fails after cancellation commits", async () => {
+    mocks.cancelTrip.mockResolvedValue({
+      ...cancelledTrip,
+      driverId: null,
+    });
+    mocks.revokePendingTripOffers.mockImplementation(() => {
+      throw new Error("redis unavailable");
+    });
+
+    const response = await request(app)
+      .post("/api/v1/bookings/trip/trip-cancel-1/cancel")
+      .send({ reason: "Changed my mind" });
+
+    expect(response.status).toBe(200);
+    expect(response.body.success).toBe(true);
+    expect(response.body.data.trip.status).toBe("CANCELLED");
   });
 
   it("still notifies the driver with trip:cancelled after committed cancellation, even if cleanup fails", async () => {
@@ -417,6 +442,10 @@ describe("POST /api/v1/bookings/trip/:id/cancel", () => {
     expect(response.status).toBe(200);
     expect(mocks.unregisterActiveTripIfCurrent).not.toHaveBeenCalled();
     expect(mocks.unregisterActiveTrip).not.toHaveBeenCalled();
+    expect(mocks.revokePendingTripOffers).toHaveBeenCalledWith(
+      "trip-cancel-1",
+      "Changed my mind"
+    );
     expect(mocks.ioTo).not.toHaveBeenCalledWith("driver:driver-1");
     expect(mocks.ioEmit).toHaveBeenCalledWith("trip:status", {
       tripId: "trip-cancel-1",

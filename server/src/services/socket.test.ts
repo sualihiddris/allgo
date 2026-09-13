@@ -65,7 +65,13 @@ vi.mock("@socket.io/redis-adapter", () => ({ createAdapter: vi.fn() }));
 const ioMock = vi.hoisted(() => {
   const emissions: Array<{ room: string; event: string; payload: unknown }> = [];
   const serverSideEmissions: Array<{ event: string; payload: unknown }> = [];
-  const serverSideHandlers: Record<string, (payload: any) => void> = {};
+  const serverSideHandlers: Record<
+    string,
+    (payload: any, acknowledge?: (resolved: boolean) => void) => void
+  > = {};
+  let serverSideAck:
+    | ((acknowledge: (error: Error | null, responses: boolean[]) => void) => void)
+    | undefined;
   let connectionHandler: ((socket: any) => void) | undefined;
 
   class FakeServer {
@@ -81,8 +87,15 @@ const ioMock = vi.hoisted(() => {
 
     adapter() {}
 
-    serverSideEmit(event: string, payload: unknown) {
+    serverSideEmit(
+      event: string,
+      payload: unknown,
+      acknowledge?: (error: Error | null, responses: boolean[]) => void
+    ) {
       serverSideEmissions.push({ event, payload });
+      if (acknowledge) {
+        serverSideAck?.(acknowledge) ?? acknowledge(null, []);
+      }
     }
 
     to(room: string) {
@@ -99,12 +112,23 @@ const ioMock = vi.hoisted(() => {
     serverSideEmissions,
     getConnectionHandler: () => connectionHandler,
     getServerSideHandler: (event: string) => serverSideHandlers[event],
+    setServerSideAck: (
+      handler:
+        | ((acknowledge: (error: Error | null, responses: boolean[]) => void) => void)
+        | undefined
+    ) => {
+      serverSideAck = handler;
+    },
   };
 });
 
 vi.mock("socket.io", () => ({ Server: ioMock.FakeServer }));
 
-import { dispatchTrip, setupSocketIO } from "./socket";
+import {
+  dispatchTrip,
+  revokePendingTripOffers,
+  setupSocketIO,
+} from "./socket";
 
 describe("dispatchTrip", () => {
   beforeEach(async () => {
@@ -112,6 +136,7 @@ describe("dispatchTrip", () => {
     config.env.REDIS_URL = undefined;
     ioMock.emissions.length = 0;
     ioMock.serverSideEmissions.length = 0;
+    ioMock.setServerSideAck(undefined);
     mocks.registerActiveTrip.mockResolvedValue(undefined);
     mocks.unregisterActiveTrip.mockResolvedValue(undefined);
     mocks.unregisterActiveTripIfCurrent.mockResolvedValue(true);
@@ -757,12 +782,12 @@ describe("dispatchTrip", () => {
     expect(remoteResponseHandler).toBeTypeOf("function");
     expect(offer.offerId).toEqual(expect.any(String));
 
-    remoteResponseHandler!({
+    expect(remoteResponseHandler!({
       tripId: "trip-1",
       offerId: offer.offerId,
       driverId: "driver-1",
       response: "accept",
-    });
+    })).toBe(true);
 
     await expect(dispatchPromise).resolves.toMatchObject({ status: "ACCEPTED" });
   });
@@ -799,6 +824,365 @@ describe("dispatchTrip", () => {
         response: "accept",
       },
     });
+  });
+
+  it("rejects a stale Redis accept when no backend owns the offer", async () => {
+    config.env.REDIS_URL = "redis://cluster";
+    const handlers: Record<string, (payload: any) => Promise<void>> = {};
+    const driverSocket = {
+      role: "DRIVER",
+      driverId: "driver-1",
+      driverRoomReady: Promise.resolve(),
+      join: vi.fn(),
+      emit: vi.fn(),
+      on: (event: string, handler: (payload: any) => Promise<void>) => {
+        handlers[event] = handler;
+      },
+    };
+
+    ioMock.getConnectionHandler()!(driverSocket);
+
+    await handlers["trip:accept"]({
+      tripId: "cancelled-trip",
+      offerId: "cancelled-offer",
+    });
+
+    expect(driverSocket.emit).toHaveBeenCalledWith(
+      "trip:accept:failed",
+      {
+        tripId: "cancelled-trip",
+        offerId: "cancelled-offer",
+        reason: "Offer expired or no longer available",
+      }
+    );
+    expect(driverSocket.emit).not.toHaveBeenCalledWith(
+      "trip:accept:received",
+      expect.anything()
+    );
+    expect(mocks.assignTripToDriver).not.toHaveBeenCalled();
+  });
+
+  it("accepts a Redis acknowledgement with a positive remote response", async () => {
+    config.env.REDIS_URL = "redis://cluster";
+    ioMock.setServerSideAck((acknowledge) => {
+      acknowledge(null, [false, true]);
+    });
+    const handlers: Record<string, (payload: any) => Promise<void>> = {};
+    const driverSocket = {
+      role: "DRIVER",
+      driverId: "driver-1",
+      driverRoomReady: Promise.resolve(),
+      join: vi.fn(),
+      emit: vi.fn(),
+      on: (event: string, handler: (payload: any) => Promise<void>) => {
+        handlers[event] = handler;
+      },
+    };
+
+    ioMock.getConnectionHandler()!(driverSocket);
+    await handlers["trip:accept"]({
+      tripId: "remote-trip",
+      offerId: "remote-offer",
+    });
+
+    expect(driverSocket.emit).toHaveBeenCalledWith(
+      "trip:accept:received",
+      { tripId: "remote-trip", offerId: "remote-offer" }
+    );
+  });
+
+  it("rejects a Redis acknowledgement with no remote owner", async () => {
+    config.env.REDIS_URL = "redis://cluster";
+    ioMock.setServerSideAck((acknowledge) => {
+      acknowledge(null, [false, false]);
+    });
+    const handlers: Record<string, (payload: any) => Promise<void>> = {};
+    const driverSocket = {
+      role: "DRIVER",
+      driverId: "driver-1",
+      driverRoomReady: Promise.resolve(),
+      join: vi.fn(),
+      emit: vi.fn(),
+      on: (event: string, handler: (payload: any) => Promise<void>) => {
+        handlers[event] = handler;
+      },
+    };
+
+    ioMock.getConnectionHandler()!(driverSocket);
+    await handlers["trip:accept"]({
+      tripId: "unknown-trip",
+      offerId: "unknown-offer",
+    });
+
+    expect(driverSocket.emit).toHaveBeenCalledWith(
+      "trip:accept:failed",
+      expect.objectContaining({
+        tripId: "unknown-trip",
+        offerId: "unknown-offer",
+        reason: "Offer expired or no longer available",
+      })
+    );
+    expect(driverSocket.emit).not.toHaveBeenCalledWith(
+      "trip:accept:received",
+      expect.anything()
+    );
+    expect(mocks.assignTripToDriver).not.toHaveBeenCalled();
+  });
+
+  it("rejects a Redis acknowledgement error without positive partial ownership", async () => {
+    config.env.REDIS_URL = "redis://cluster";
+    ioMock.setServerSideAck((acknowledge) => {
+      acknowledge(new Error("timeout"), [false]);
+    });
+    const handlers: Record<string, (payload: any) => Promise<void>> = {};
+    const driverSocket = {
+      role: "DRIVER",
+      driverId: "driver-1",
+      driverRoomReady: Promise.resolve(),
+      join: vi.fn(),
+      emit: vi.fn(),
+      on: (event: string, handler: (payload: any) => Promise<void>) => {
+        handlers[event] = handler;
+      },
+    };
+
+    ioMock.getConnectionHandler()!(driverSocket);
+    await handlers["trip:accept"]({
+      tripId: "timed-out-trip",
+      offerId: "timed-out-offer",
+    });
+
+    expect(driverSocket.emit).toHaveBeenCalledWith(
+      "trip:accept:failed",
+      expect.objectContaining({
+        tripId: "timed-out-trip",
+        offerId: "timed-out-offer",
+      })
+    );
+    expect(driverSocket.emit).not.toHaveBeenCalledWith(
+      "trip:accept:received",
+      expect.anything()
+    );
+    expect(mocks.assignTripToDriver).not.toHaveBeenCalled();
+  });
+
+  it("preserves positive partial ownership when Redis acknowledgement times out", async () => {
+    config.env.REDIS_URL = "redis://cluster";
+    ioMock.setServerSideAck((acknowledge) => {
+      acknowledge(new Error("timeout"), [true]);
+    });
+    const handlers: Record<string, (payload: any) => Promise<void>> = {};
+    const driverSocket = {
+      role: "DRIVER",
+      driverId: "driver-1",
+      driverRoomReady: Promise.resolve(),
+      join: vi.fn(),
+      emit: vi.fn(),
+      on: (event: string, handler: (payload: any) => Promise<void>) => {
+        handlers[event] = handler;
+      },
+    };
+
+    ioMock.getConnectionHandler()!(driverSocket);
+    await handlers["trip:accept"]({
+      tripId: "partial-trip",
+      offerId: "partial-offer",
+    });
+
+    expect(driverSocket.emit).toHaveBeenCalledWith(
+      "trip:accept:received",
+      { tripId: "partial-trip", offerId: "partial-offer" }
+    );
+  });
+
+  it("rejects a stale Redis decline without a pending owner", async () => {
+    config.env.REDIS_URL = "redis://cluster";
+    ioMock.setServerSideAck((acknowledge) => {
+      acknowledge(null, [false, false]);
+    });
+    const handlers: Record<string, (payload: any) => Promise<void>> = {};
+    const driverSocket = {
+      role: "DRIVER",
+      driverId: "driver-1",
+      driverRoomReady: Promise.resolve(),
+      join: vi.fn(),
+      emit: vi.fn(),
+      on: (event: string, handler: (payload: any) => Promise<void>) => {
+        handlers[event] = handler;
+      },
+    };
+
+    ioMock.getConnectionHandler()!(driverSocket);
+    await handlers["trip:decline"]({
+      tripId: "stale-decline-trip",
+      offerId: "stale-decline-offer",
+    });
+
+    expect(driverSocket.emit).toHaveBeenCalledWith(
+      "trip:decline:failed",
+      expect.objectContaining({
+        tripId: "stale-decline-trip",
+        offerId: "stale-decline-offer",
+        reason: "Offer expired or no longer available",
+      })
+    );
+    expect(driverSocket.emit).not.toHaveBeenCalledWith(
+      "trip:decline:received",
+      expect.anything()
+    );
+  });
+
+  it("acknowledges a valid remote Redis decline", async () => {
+    config.env.REDIS_URL = "redis://cluster";
+    ioMock.setServerSideAck((acknowledge) => {
+      acknowledge(null, [true]);
+    });
+    const handlers: Record<string, (payload: any) => Promise<void>> = {};
+    const driverSocket = {
+      role: "DRIVER",
+      driverId: "driver-1",
+      driverRoomReady: Promise.resolve(),
+      join: vi.fn(),
+      emit: vi.fn(),
+      on: (event: string, handler: (payload: any) => Promise<void>) => {
+        handlers[event] = handler;
+      },
+    };
+
+    ioMock.getConnectionHandler()!(driverSocket);
+    await handlers["trip:decline"]({
+      tripId: "remote-decline-trip",
+      offerId: "remote-decline-offer",
+    });
+
+    expect(driverSocket.emit).toHaveBeenCalledWith(
+      "trip:decline:received",
+      {
+        tripId: "remote-decline-trip",
+        offerId: "remote-decline-offer",
+      }
+    );
+  });
+
+  it("revokes a shown local offer without waiting for its timeout", async () => {
+    mocks.findNearbyDrivers.mockResolvedValue([{ driverId: "driver-1" }]);
+    mocks.getJobTimeout.mockReturnValue(30);
+
+    const dispatchPromise = dispatchTrip("trip-1");
+    for (let attempt = 0; attempt < 20 && !ioMock.emissions.some(
+      (emission) => emission.event === "trip:offer"
+    ); attempt += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    }
+
+    const offer = ioMock.emissions.find(
+      (emission) => emission.event === "trip:offer"
+    )?.payload as { tripId: string; offerId: string };
+
+    revokePendingTripOffers("trip-1", "Customer changed plans");
+
+    await expect(dispatchPromise).resolves.toEqual({
+      status: "IN_PROGRESS",
+      reason: "Trip was cancelled during dispatch",
+    });
+    expect(ioMock.emissions).toContainEqual({
+      room: "driver:driver-1",
+      event: "trip:offer:cancelled",
+      payload: {
+        tripId: offer.tripId,
+        offerId: offer.offerId,
+        reason: "Customer changed plans",
+      },
+    });
+    expect(mocks.assignTripToDriver).not.toHaveBeenCalled();
+  });
+
+  it("revokes a distributed pending offer on the cancellation event", async () => {
+    mocks.findNearbyDrivers.mockResolvedValue([{ driverId: "driver-1" }]);
+    mocks.getJobTimeout.mockReturnValue(30);
+    config.env.REDIS_URL = "redis://cluster";
+
+    const dispatchPromise = dispatchTrip("trip-1");
+    for (let attempt = 0; attempt < 20 && !ioMock.emissions.some(
+      (emission) => emission.event === "trip:offer"
+    ); attempt += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    }
+    const offer = ioMock.emissions.find(
+      (emission) => emission.event === "trip:offer"
+    )?.payload as { tripId: string; offerId: string };
+
+    ioMock.getServerSideHandler("dispatch:trip-cancelled")!({
+      tripId: "trip-1",
+      reason: "Customer cancelled",
+    });
+
+    await expect(dispatchPromise).resolves.toMatchObject({
+      status: "IN_PROGRESS",
+    });
+    expect(ioMock.emissions).toContainEqual({
+      room: "driver:driver-1",
+      event: "trip:offer:cancelled",
+      payload: {
+        tripId: offer.tripId,
+        offerId: offer.offerId,
+        reason: "Customer cancelled",
+      },
+    });
+    expect(mocks.assignTripToDriver).not.toHaveBeenCalled();
+  });
+
+  it("silently resolves an offer revoked during the final pre-offer fence", async () => {
+    mocks.findNearbyDrivers.mockResolvedValue([{ driverId: "driver-1" }]);
+    mocks.getJobTimeout.mockReturnValue(30);
+    let releaseFence!: (value: { id: string } | null) => void;
+    mocks.tripFindFirst.mockImplementationOnce(
+      () => new Promise((resolve) => {
+        releaseFence = resolve;
+      })
+    );
+
+    const dispatchPromise = dispatchTrip("trip-1");
+    for (let attempt = 0; attempt < 20 && !releaseFence; attempt += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    }
+
+    revokePendingTripOffers("trip-1", "Customer cancelled");
+    releaseFence({ id: "trip-1" });
+
+    await expect(dispatchPromise).resolves.toMatchObject({
+      status: "IN_PROGRESS",
+    });
+    expect(ioMock.emissions).toEqual([]);
+    expect(mocks.assignTripToDriver).not.toHaveBeenCalled();
+  });
+
+  it("suppresses a stale push lookup after an offer is revoked", async () => {
+    mocks.findNearbyDrivers.mockResolvedValue([{ driverId: "driver-1" }]);
+    mocks.getJobTimeout.mockReturnValue(30);
+    let releasePush!: (value: { pushToken: string } | null) => void;
+    mocks.driverFindUnique.mockImplementationOnce(
+      () => new Promise((resolve) => {
+        releasePush = resolve;
+      })
+    );
+
+    const dispatchPromise = dispatchTrip("trip-1");
+    for (let attempt = 0; attempt < 20 && !releasePush; attempt += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    }
+    expect(ioMock.emissions.some(
+      (emission) => emission.event === "trip:offer"
+    )).toBe(true);
+
+    revokePendingTripOffers("trip-1", "Customer cancelled");
+    releasePush({ pushToken: "push-token" });
+    await expect(dispatchPromise).resolves.toMatchObject({
+      status: "IN_PROGRESS",
+    });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(mocks.sendPushNotification).not.toHaveBeenCalled();
   });
 
   it("ignores a stale offerId without resolving the active offer", async () => {

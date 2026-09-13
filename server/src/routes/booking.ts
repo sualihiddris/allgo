@@ -15,7 +15,10 @@ import { generalRateLimit } from "../middleware/rateLimit";
 import { createTrip, getTripById, cancelTrip } from "../services/trip";
 import { sendSuccess, sendCreated } from "../utils/response";
 import { prisma } from "../config/database";
-import { getIO } from "../services/socket";
+import {
+  getIO,
+  revokePendingTripOffers,
+} from "../services/socket";
 import { unregisterActiveTripIfCurrent } from "../services/tracking";
 
 const router = Router();
@@ -156,6 +159,24 @@ router.post(
 
       const trip = await cancelTrip(req.params.id, userId, reason);
 
+      const cancellationReason =
+        trip.cancelReason || "Customer cancelled";
+
+      // A REQUESTED trip has no assigned driverId yet, but it may already
+      // have a live dispatch offer waiting on another backend instance.
+      // Revoke those offers only after cancellation has won the database race.
+      try {
+        revokePendingTripOffers(
+          trip.id,
+          cancellationReason
+        );
+      } catch (socketError) {
+        console.error(
+          `[Cancellation] Failed to revoke pending offers for trip ${trip.id}:`,
+          socketError
+        );
+      }
+
       // Database state is authoritative. Realtime cleanup happens only
       // after cancellation has successfully won the database race.
       if (trip.driverId) {
@@ -176,7 +197,7 @@ router.post(
             .to(`driver:${trip.driverId}`)
             .emit("trip:cancelled", {
               tripId: trip.id,
-              reason: trip.cancelReason || "Customer cancelled",
+              reason: cancellationReason,
             });
         } catch (socketError) {
           console.error(

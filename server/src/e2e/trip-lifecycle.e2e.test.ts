@@ -1145,6 +1145,16 @@ describe("Trip lifecycle E2E", () => {
         //
         // 3. Customer cancellation wins before the driver accepts.
         //
+        const offerCancelledPromise =
+          waitForEvent<{
+            tripId: string;
+            offerId: string;
+            reason: string;
+          }>(
+            driverSocket,
+            "trip:offer:cancelled"
+          );
+
         const cancelResponse = await request(httpServer)
           .post(
             `/api/v1/bookings/trip/${tripId}/cancel`
@@ -1158,6 +1168,12 @@ describe("Trip lifecycle E2E", () => {
           });
 
         expect(cancelResponse.status).toBe(200);
+
+        await expect(offerCancelledPromise).resolves.toEqual({
+          tripId,
+          offerId: offer.offerId,
+          reason: "E2E-03A customer cancelled before accept",
+        });
 
         const cancelledAfterHttp =
           await prisma.trip.findUniqueOrThrow({
@@ -1187,13 +1203,14 @@ describe("Trip lifecycle E2E", () => {
         //
         // 4. Driver now sends the stale accept using the exact old offerId.
         //
-        const acceptReceivedPromise =
+        const acceptFailedPromise =
           waitForEvent<{
             tripId: string;
             offerId: string;
+            reason: string;
           }>(
             driverSocket,
-            "trip:accept:received"
+            "trip:accept:failed"
           );
 
         driverSocket.emit(
@@ -1204,12 +1221,13 @@ describe("Trip lifecycle E2E", () => {
           }
         );
 
-        const acceptReceived =
-          await acceptReceivedPromise;
+        const acceptFailed =
+          await acceptFailedPromise;
 
-        expect(acceptReceived).toEqual({
+        expect(acceptFailed).toEqual({
           tripId,
           offerId: offer.offerId,
+          reason: "Offer expired or no longer available",
         });
 
         //
