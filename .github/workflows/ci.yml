@@ -39,6 +39,17 @@ jobs:
           --health-timeout=5s
           --health-retries=20
 
+      redis:
+        image: redis:7-alpine
+
+        ports:
+          - 6379:6379
+
+        options: >-
+          --health-cmd="redis-cli ping"
+          --health-interval=5s
+          --health-timeout=5s
+          --health-retries=20
     env:
       NODE_ENV: test
 
@@ -115,6 +126,8 @@ jobs:
       - name: Run trip lifecycle E2E tests
         run: npm --workspace @allgo/server run test:e2e
 
+      - name: Run two-backend Redis smoke
+        run: node server/scripts/two-backend-redis-smoke.cjs
       - name: Build server
         run: npm --workspace @allgo/server run build
 
