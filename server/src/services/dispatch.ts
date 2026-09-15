@@ -91,6 +91,7 @@ export interface JobOffer {
 const DRIVER_LOCATION_PREFIX = "driver:location:";
 const DRIVER_LOCATION_TTL = 300; // 5 minutes
 const DRIVER_LOCATION_MAX_AGE_MS = 5 * 60 * 1000;
+const DRIVER_LOCATION_MAX_FUTURE_SKEW_MS = 30 * 1000;
 
 // Legacy exports for compatibility (use getSearchRadii() and getJobTimeout() instead)
 const SEARCH_RADII = DAY_SEARCH_RADII;
@@ -131,12 +132,14 @@ function normalizeDriverLocation(value: unknown): DriverLocation | null {
 
   const location = value as { lat?: unknown; lng?: unknown; timestamp?: unknown };
   const timestamp = normalizeLocationTimestamp(location.timestamp);
+  const now = Date.now();
 
   if (
     !isValidLatitude(location.lat) ||
     !isValidLongitude(location.lng) ||
     timestamp === null ||
-    Date.now() - timestamp > DRIVER_LOCATION_MAX_AGE_MS
+    now - timestamp > DRIVER_LOCATION_MAX_AGE_MS ||
+    timestamp - now > DRIVER_LOCATION_MAX_FUTURE_SKEW_MS
   ) {
     return null;
   }

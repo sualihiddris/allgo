@@ -355,6 +355,90 @@ describe("driver location validation", () => {
     expect(mocks.driverFindUnique).not.toHaveBeenCalled();
   });
 
+  it("falls back to MySQL when Redis is too far in the future", async () => {
+    const now = new Date("2026-09-15T12:00:00.000Z");
+    vi.useFakeTimers();
+    vi.setSystemTime(now);
+
+    try {
+      mocks.redisGet.mockResolvedValue(
+        JSON.stringify({
+          lat: 5.30233,
+          lng: -1.99255,
+          timestamp: now.getTime() + 30_001,
+        })
+      );
+      mocks.driverFindUnique.mockResolvedValue({
+        lastLocation: JSON.stringify({
+          lat: 5.3,
+          lng: -1.9,
+          timestamp: now.toISOString(),
+        }),
+      });
+
+      await expect(
+        getDriverLocation("driver-1")
+      ).resolves.toEqual({
+        lat: 5.3,
+        lng: -1.9,
+        timestamp: now.getTime(),
+      });
+
+      expect(mocks.driverFindUnique).toHaveBeenCalledTimes(1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("rejects a MySQL fallback location that is too far in the future", async () => {
+    const now = new Date("2026-09-15T12:00:00.000Z");
+    vi.useFakeTimers();
+    vi.setSystemTime(now);
+
+    try {
+      mocks.redisGet.mockResolvedValue(null);
+      mocks.driverFindUnique.mockResolvedValue({
+        lastLocation: JSON.stringify({
+          lat: 5.3,
+          lng: -1.9,
+          timestamp: new Date(now.getTime() + 30_001).toISOString(),
+        }),
+      });
+
+      await expect(getDriverLocation("driver-1")).resolves.toBeNull();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("accepts a Redis location exactly at the future-skew boundary", async () => {
+    const now = new Date("2026-09-15T12:00:00.000Z");
+    vi.useFakeTimers();
+    vi.setSystemTime(now);
+
+    try {
+      mocks.redisGet.mockResolvedValue(
+        JSON.stringify({
+          lat: 5.30233,
+          lng: -1.99255,
+          timestamp: now.getTime() + 30_000,
+        })
+      );
+
+      await expect(
+        getDriverLocation("driver-1")
+      ).resolves.toEqual({
+        lat: 5.30233,
+        lng: -1.99255,
+        timestamp: now.getTime() + 30_000,
+      });
+
+      expect(mocks.driverFindUnique).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("returns null when the MySQL fallback is stale", async () => {
     mocks.redisGet.mockResolvedValue(null);
     mocks.driverFindUnique.mockResolvedValue({
