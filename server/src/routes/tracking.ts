@@ -12,11 +12,9 @@ import { requireAuth } from "../middleware";
 import { prisma } from "../config";
 import { sendSuccess } from "../utils";
 import { getIO } from "../services/socket";
+import { getDriverLocation } from "../services/dispatch";
 import { persistDriverLocationSnapshot } from "../services/driverLocation";
-import {
-  parseStoredDriverLocation,
-  unregisterActiveTripIfCurrent,
-} from "../services/tracking";
+import { unregisterActiveTripIfCurrent } from "../services/tracking";
 
 const router = Router();
 
@@ -51,11 +49,11 @@ router.get(
           },
           driver: {
             select: {
+              id: true,
               userId: true,
               user: { select: { name: true, phone: true } },
               vehicleType: true,
               licensePlate: true,
-              lastLocation: true,
             },
           },
         },
@@ -80,6 +78,10 @@ router.get(
           error: { message: "Trip not found" },
         });
       }
+
+      const driverLocation = trip.driver
+        ? await getDriverLocation(trip.driver.id)
+        : null;
 
       sendSuccess(res, {
         trip: {
@@ -116,7 +118,12 @@ router.get(
                 phone: trip.driver.user.phone,
                 vehicleType: trip.driver.vehicleType,
                 licensePlate: trip.driver.licensePlate,
-                location: parseStoredDriverLocation(trip.driver.lastLocation),
+                location: driverLocation
+                  ? {
+                      lat: driverLocation.lat,
+                      lng: driverLocation.lng,
+                    }
+                  : null,
               }
             : null,
           createdAt: trip.createdAt,

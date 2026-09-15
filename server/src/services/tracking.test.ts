@@ -4,6 +4,7 @@ const mocks = vi.hoisted(() => ({
   redisGet: vi.fn(),
   compareAndDelete: vi.fn(),
   tripFindFirst: vi.fn(),
+  getDriverLocation: vi.fn(),
 }));
 
 vi.mock("../config/database", () => ({
@@ -24,6 +25,10 @@ vi.mock("../config/redis", () => ({
   compareAndDelete: mocks.compareAndDelete,
 }));
 
+vi.mock("./dispatch", () => ({
+  getDriverLocation: mocks.getDriverLocation,
+}));
+
 import {
   getActiveTripForDriver,
   startTripTracking,
@@ -33,6 +38,7 @@ describe("active-trip cache reconciliation", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mocks.compareAndDelete.mockResolvedValue(true);
+    mocks.getDriverLocation.mockResolvedValue(null);
   });
 
   it("returns undefined without querying MySQL when no Redis mapping exists", async () => {
@@ -133,6 +139,7 @@ describe("active-trip cache reconciliation", () => {
         driver: true,
       },
     });
+    expect(mocks.getDriverLocation).not.toHaveBeenCalled();
   });
   it("still reports an unassigned driver to the owning customer", async () => {
     mocks.tripFindFirst.mockResolvedValue({
@@ -148,14 +155,15 @@ describe("active-trip cache reconciliation", () => {
         "customer-user-1"
       )
     ).rejects.toThrow("No driver assigned to trip");
+    expect(mocks.getDriverLocation).not.toHaveBeenCalled();
   });
   it("rejects starting live tracking for a terminal trip", async () => {
     mocks.tripFindFirst.mockResolvedValue({
       id: "trip-1",
       status: "COMPLETED",
       driver: {
+        id: "driver-1",
         userId: "driver-user-1",
-        lastLocation: null,
       },
       customer: {
         userId: "customer-user-1",
@@ -169,6 +177,7 @@ describe("active-trip cache reconciliation", () => {
         "customer-user-1"
       )
     ).rejects.toThrow("Trip is not active");
+    expect(mocks.getDriverLocation).not.toHaveBeenCalled();
   });
 
   it("allows tracking for an ACTIVE trip owned by the customer", async () => {
@@ -176,12 +185,18 @@ describe("active-trip cache reconciliation", () => {
       id: "trip-1",
       status: "ACTIVE",
       driver: {
+        id: "driver-1",
         userId: "driver-user-1",
-        lastLocation: JSON.stringify({ lat: 5.302, lng: -1.992, timestamp: "ignored" }),
       },
       customer: {
         userId: "customer-user-1",
       },
+    });
+
+    mocks.getDriverLocation.mockResolvedValue({
+      lat: 5.302,
+      lng: -1.992,
+      timestamp: Date.now(),
     });
 
     await expect(
@@ -198,15 +213,16 @@ describe("active-trip cache reconciliation", () => {
         lng: -1.992,
       },
     });
+    expect(mocks.getDriverLocation).toHaveBeenCalledWith("driver-1");
   });
 
-  it("returns null when the stored driver location is malformed", async () => {
+  it("returns null when no current driver location is available", async () => {
     mocks.tripFindFirst.mockResolvedValue({
       id: "trip-1",
       status: "ACTIVE",
       driver: {
+        id: "driver-1",
         userId: "driver-user-1",
-        lastLocation: "{not-valid-json",
       },
       customer: {
         userId: "customer-user-1",
@@ -224,5 +240,6 @@ describe("active-trip cache reconciliation", () => {
       driverId: "driver-user-1",
       currentLocation: null,
     });
+    expect(mocks.getDriverLocation).toHaveBeenCalledWith("driver-1");
   });
 });

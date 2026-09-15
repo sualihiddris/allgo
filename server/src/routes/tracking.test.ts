@@ -13,7 +13,7 @@ const mocks = vi.hoisted(() => ({
   to: vi.fn(),
   unregisterActiveTrip: vi.fn(),
   unregisterActiveTripIfCurrent: vi.fn(),
-  parseStoredDriverLocation: vi.fn(),
+  getDriverLocation: vi.fn(),
   authUser: {
     id: "driver-user-1",
     role: "DRIVER",
@@ -47,10 +47,13 @@ vi.mock("../services/socket", () => ({
   }),
 }));
 
+vi.mock("../services/dispatch", () => ({
+  getDriverLocation: mocks.getDriverLocation,
+}));
+
 vi.mock("../services/tracking", () => ({
   unregisterActiveTrip: mocks.unregisterActiveTrip,
   unregisterActiveTripIfCurrent: mocks.unregisterActiveTripIfCurrent,
-  parseStoredDriverLocation: mocks.parseStoredDriverLocation,
 }));
 
 vi.mock("../services/driverLocation", () => ({
@@ -111,6 +114,7 @@ const trackingTripDetails = {
     },
   },
   driver: {
+    id: "driver-1",
     userId: "driver-user-1",
     user: {
       name: "E2E Driver",
@@ -118,19 +122,16 @@ const trackingTripDetails = {
     },
     vehicleType: "MOTO",
     licensePlate: "E2E-0001",
-    lastLocation: JSON.stringify({
-      lat: 5.302,
-      lng: -1.992,
-    }),
   },
 };
 
 describe("GET /api/v1/tracking/trip/:id", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    mocks.parseStoredDriverLocation.mockReturnValue({
+    mocks.getDriverLocation.mockResolvedValue({
       lat: 5.302,
       lng: -1.992,
+      timestamp: Date.now(),
     });
     mocks.tripFindUnique.mockResolvedValue(
       trackingTripDetails
@@ -144,11 +145,7 @@ describe("GET /api/v1/tracking/trip/:id", () => {
 
     expect(response.status).toBe(200);
 
-    expect(
-      mocks.parseStoredDriverLocation
-    ).toHaveBeenCalledWith(
-      trackingTripDetails.driver.lastLocation
-    );
+    expect(mocks.getDriverLocation).toHaveBeenCalledWith("driver-1");
     expect(response.body.data.trip).toMatchObject({
       id: "trip-detail-1",
       status: "ACCEPTED",
@@ -165,6 +162,11 @@ describe("GET /api/v1/tracking/trip/:id", () => {
         },
       },
     });
+    expect(response.body.data.trip.driver.location).toEqual({
+      lat: 5.302,
+      lng: -1.992,
+    });
+    expect(response.body.data.trip.driver.location.timestamp).toBeUndefined();
   });
 
   it("allows the owning customer to read trip details", async () => {
@@ -179,6 +181,19 @@ describe("GET /api/v1/tracking/trip/:id", () => {
     expect(response.body.data.trip.id).toBe(
       "trip-detail-1"
     );
+    expect(mocks.getDriverLocation).toHaveBeenCalledWith("driver-1");
+  });
+
+  it("returns null when no current driver location is available", async () => {
+    mocks.getDriverLocation.mockResolvedValue(null);
+
+    const response = await request(app).get(
+      "/api/v1/tracking/trip/trip-detail-1"
+    );
+
+    expect(response.status).toBe(200);
+    expect(response.body.data.trip.driver.location).toBeNull();
+    expect(mocks.getDriverLocation).toHaveBeenCalledWith("driver-1");
   });
 
   it("returns 404 to an unrelated authenticated user", async () => {
@@ -195,6 +210,7 @@ describe("GET /api/v1/tracking/trip/:id", () => {
         message: "Trip not found",
       },
     });
+    expect(mocks.getDriverLocation).not.toHaveBeenCalled();
   });
 
   it("returns the same 404 when the trip does not exist", async () => {
@@ -210,6 +226,7 @@ describe("GET /api/v1/tracking/trip/:id", () => {
         message: "Trip not found",
       },
     });
+    expect(mocks.getDriverLocation).not.toHaveBeenCalled();
   });
 });
 
