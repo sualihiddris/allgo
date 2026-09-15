@@ -4,7 +4,7 @@ const mocks = vi.hoisted(() => ({
   redisGet: vi.fn(),
   redisSetex: vi.fn(),
   driverFindUnique: vi.fn(),
-  driverUpdate: vi.fn(),
+  persistDriverLocationSnapshot: vi.fn(),
 }));
 
 vi.mock("../config/redis", () => ({
@@ -18,9 +18,12 @@ vi.mock("../config/database", () => ({
   prisma: {
     driver: {
       findUnique: mocks.driverFindUnique,
-      update: mocks.driverUpdate,
     },
   },
+}));
+
+vi.mock("./driverLocation", () => ({
+  persistDriverLocationSnapshot: mocks.persistDriverLocationSnapshot,
 }));
 
 import {
@@ -33,7 +36,7 @@ describe("driver location validation", () => {
     vi.clearAllMocks();
 
     mocks.redisSetex.mockResolvedValue("OK");
-    mocks.driverUpdate.mockResolvedValue({});
+    mocks.persistDriverLocationSnapshot.mockResolvedValue({ persisted: true });
     mocks.redisGet.mockResolvedValue(null);
     mocks.driverFindUnique.mockResolvedValue(null);
   });
@@ -46,7 +49,10 @@ describe("driver location validation", () => {
     );
 
     expect(mocks.redisSetex).toHaveBeenCalledTimes(1);
-    expect(mocks.driverUpdate).toHaveBeenCalledTimes(1);
+    expect(mocks.persistDriverLocationSnapshot).toHaveBeenCalledTimes(1);
+    expect(mocks.redisSetex.mock.invocationCallOrder[0]).toBeLessThan(
+      mocks.persistDriverLocationSnapshot.mock.invocationCallOrder[0]
+    );
 
     const redisPayload = JSON.parse(
       mocks.redisSetex.mock.calls[0][2]
@@ -60,9 +66,12 @@ describe("driver location validation", () => {
       expect.any(Number)
     );
 
-    const databasePayload = JSON.parse(
-      mocks.driverUpdate.mock.calls[0][0].data.lastLocation
-    );
+    const durableCall = mocks.persistDriverLocationSnapshot.mock.calls[0];
+    const databasePayload = {
+      lat: durableCall[1],
+      lng: durableCall[2],
+      timestamp: durableCall[3].toISOString(),
+    };
 
     expect(databasePayload).toMatchObject({
       lat: 5.30233,
@@ -82,12 +91,12 @@ describe("driver location validation", () => {
       updateDriverLocation("driver-1", 5.30233, -1.99255)
     ).rejects.toBe(redisError);
 
-    expect(mocks.driverUpdate).not.toHaveBeenCalled();
+    expect(mocks.persistDriverLocationSnapshot).not.toHaveBeenCalled();
   });
 
   it("resolves after Redis success when MySQL persistence fails", async () => {
     const persistenceError = new Error("MySQL unavailable");
-    mocks.driverUpdate.mockRejectedValue(persistenceError);
+    mocks.persistDriverLocationSnapshot.mockRejectedValue(persistenceError);
     const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
 
     await expect(
@@ -95,13 +104,27 @@ describe("driver location validation", () => {
     ).resolves.toBeUndefined();
 
     expect(mocks.redisSetex).toHaveBeenCalledTimes(1);
-    expect(mocks.driverUpdate).toHaveBeenCalledTimes(1);
+    expect(mocks.persistDriverLocationSnapshot).toHaveBeenCalledTimes(1);
     expect(warnSpy).toHaveBeenCalledWith(
       "[Dispatch] Failed to persist location for driver driver-1:",
       persistenceError
     );
     expect(mocks.redisGet).not.toHaveBeenCalled();
     warnSpy.mockRestore();
+  });
+
+  it.each([
+    ["stale", false],
+    ["equal", false],
+  ])("resolves when the durable snapshot is %s", async (_label, persisted) => {
+    mocks.persistDriverLocationSnapshot.mockResolvedValue({ persisted });
+
+    await expect(
+      updateDriverLocation("driver-1", 5.30233, -1.99255)
+    ).resolves.toBeUndefined();
+
+    expect(mocks.redisSetex).toHaveBeenCalledTimes(1);
+    expect(mocks.persistDriverLocationSnapshot).toHaveBeenCalledTimes(1);
   });
 
   it.each([
@@ -130,7 +153,7 @@ describe("driver location validation", () => {
       ).not.toHaveBeenCalled();
 
       expect(
-        mocks.driverUpdate
+        mocks.persistDriverLocationSnapshot
       ).not.toHaveBeenCalled();
     }
   );
@@ -157,7 +180,7 @@ describe("driver location validation", () => {
     ).toHaveBeenCalledTimes(2);
 
     expect(
-      mocks.driverUpdate
+      mocks.persistDriverLocationSnapshot
     ).toHaveBeenCalledTimes(2);
   });
 

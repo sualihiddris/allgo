@@ -12,6 +12,7 @@ import { requireAuth } from "../middleware";
 import { prisma } from "../config";
 import { sendSuccess } from "../utils";
 import { getIO } from "../services/socket";
+import { persistDriverLocationSnapshot } from "../services/driverLocation";
 import {
   parseStoredDriverLocation,
   unregisterActiveTripIfCurrent,
@@ -150,6 +151,7 @@ router.put(
       const { status, location, cancelReason } = statusUpdateSchema.parse(
         req.body
       );
+      const locationSampleTimestamp = location ? new Date() : undefined;
       const tripId = req.params.id;
 
       // Find trip and verify ownership
@@ -255,17 +257,13 @@ router.put(
 
       // Perform secondary effects only after this request actually won the
       // authoritative state transition.
-      if (location && trip.driverId) {
-        await prisma.driver.update({
-          where: { id: trip.driverId },
-          data: {
-            lastLocation: JSON.stringify({
-              lat: location.lat,
-              lng: location.lng,
-              timestamp: Date.now(),
-            }),
-          },
-        });
+      if (location && trip.driverId && locationSampleTimestamp) {
+        await persistDriverLocationSnapshot(
+          trip.driverId,
+          location.lat,
+          location.lng,
+          locationSampleTimestamp
+        );
       }
 
       if (

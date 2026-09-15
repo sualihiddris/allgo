@@ -73,6 +73,7 @@ model Driver {
   isOnline               Boolean            @default(false)
   nightMode              Boolean            @default(false)
   lastLocation           String?            @db.LongText
+  lastLocationAt         DateTime?          @db.DateTime(3)
   totalTrips             Int                @default(0)
   // Section 4E: Expo push token, used as a wake-up channel for job offers
   // when the driver's Socket.io connection has died (backgrounded app)
