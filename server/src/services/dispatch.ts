@@ -29,6 +29,7 @@
 
 import { prisma } from "../config/database";
 import { redis } from "../config/redis";
+import { persistDriverLocationSnapshot } from "./driverLocation";
 import { VehicleType, ServiceType, DeliveryType } from "@prisma/client";
 import {
   isNightServiceHours,
@@ -167,14 +168,14 @@ export async function updateDriverLocation(
     JSON.stringify({ lat, lng, timestamp })
   );
 
-  // Also update in database for persistence
+  // Durable persistence is secondary to the successful Redis publication.
   try {
-    await prisma.driver.update({
-      where: { id: driverId },
-      data: {
-        lastLocation: JSON.stringify({ lat, lng, timestamp: new Date(timestamp).toISOString() }),
-      },
-    });
+    await persistDriverLocationSnapshot(
+      driverId,
+      lat,
+      lng,
+      new Date(timestamp)
+    );
   } catch (error) {
     console.warn(`[Dispatch] Failed to persist location for driver ${driverId}:`, error);
   }

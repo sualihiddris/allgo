@@ -7,6 +7,7 @@ const mocks = vi.hoisted(() => ({
   tripUpdateMany: vi.fn(),
   tripFindUniqueOrThrow: vi.fn(),
   driverUpdate: vi.fn(),
+  persistDriverLocationSnapshot: vi.fn(),
   transaction: vi.fn(),
   emit: vi.fn(),
   to: vi.fn(),
@@ -50,6 +51,10 @@ vi.mock("../services/tracking", () => ({
   unregisterActiveTrip: mocks.unregisterActiveTrip,
   unregisterActiveTripIfCurrent: mocks.unregisterActiveTripIfCurrent,
   parseStoredDriverLocation: mocks.parseStoredDriverLocation,
+}));
+
+vi.mock("../services/driverLocation", () => ({
+  persistDriverLocationSnapshot: mocks.persistDriverLocationSnapshot,
 }));
 
 import { errorHandler } from "../middleware/errorHandler";
@@ -255,6 +260,7 @@ describe("PUT /api/v1/tracking/trip/:id/status", () => {
     });
 
     mocks.driverUpdate.mockResolvedValue({});
+    mocks.persistDriverLocationSnapshot.mockResolvedValue({ persisted: true });
     mocks.unregisterActiveTrip.mockResolvedValue(undefined);
     mocks.unregisterActiveTripIfCurrent.mockResolvedValue(true);
     mocks.tripFindUnique.mockResolvedValue(trip);
@@ -361,6 +367,51 @@ describe("PUT /api/v1/tracking/trip/:id/status", () => {
       ).not.toHaveBeenCalled();
     }
   );
+
+  it("accepts a stale tracking snapshot without failing the status transition", async () => {
+    mocks.persistDriverLocationSnapshot.mockResolvedValue({ persisted: false });
+    mocks.tripFindUniqueOrThrow.mockResolvedValue({
+      id: "trip-1",
+      status: "ACTIVE",
+      startedAt: new Date("2026-09-07T10:00:00.000Z"),
+      completedAt: null,
+    });
+
+    const response = await request(app)
+      .put("/api/v1/tracking/trip/trip-1/status")
+      .send({
+        status: "STARTED",
+        location: {
+          lat: 5.302,
+          lng: -1.992,
+        },
+      });
+
+    expect(response.status).toBe(200);
+    expect(mocks.persistDriverLocationSnapshot).toHaveBeenCalledWith(
+      "driver-1",
+      5.302,
+      -1.992,
+      expect.any(Date)
+    );
+    expect(mocks.driverUpdate).not.toHaveBeenCalled();
+  });
+
+  it("preserves tracking route database failure behavior for location persistence", async () => {
+    const persistenceError = new Error("MySQL unavailable");
+    mocks.persistDriverLocationSnapshot.mockRejectedValue(persistenceError);
+    const response = await request(app)
+      .put("/api/v1/tracking/trip/trip-1/status")
+      .send({
+        status: "STARTED",
+        location: {
+          lat: 5.302,
+          lng: -1.992,
+        },
+      });
+
+    expect(response.status).toBe(500);
+  });
 
   it(
     "emits COMPLETED status, increments totalTrips and unregisters the active trip via compare-and-delete",
