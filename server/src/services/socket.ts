@@ -31,6 +31,10 @@ import {
 import { sendPushNotification } from "../services/push";
 import { VehicleType } from "@prisma/client";
 import { prisma } from "../config/database";
+import {
+  DAY_JOB_TIMEOUT_SECONDS,
+  NIGHT_JOB_TIMEOUT_SECONDS,
+} from "../../../shared/constants/nightService";
 
 interface AuthenticatedSocket extends Socket {
   userId?: string;
@@ -48,7 +52,13 @@ interface AuthenticatedSocket extends Socket {
 
 let ioInstance: Server | null = null;
 
-const DISPATCH_CLAIM_LEASE_MS = 5 * 60 * 1000;
+const DISPATCH_CLAIM_LEASE_MS =
+  Math.max(
+    DAY_JOB_TIMEOUT_SECONDS,
+    NIGHT_JOB_TIMEOUT_SECONDS
+  ) *
+  2 *
+  1000;
 
 export type DispatchTripResult =
   | {

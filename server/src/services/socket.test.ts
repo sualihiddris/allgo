@@ -129,6 +129,10 @@ import {
   revokePendingTripOffers,
   setupSocketIO,
 } from "./socket";
+import {
+  DAY_JOB_TIMEOUT_SECONDS,
+  NIGHT_JOB_TIMEOUT_SECONDS,
+} from "../../../shared/constants/nightService";
 
 describe("dispatchTrip", () => {
   beforeEach(async () => {
@@ -317,33 +321,49 @@ describe("dispatchTrip", () => {
     });
   });
 
-  it("builds the atomic claim filter to reclaim expired SEARCHING leases", async () => {
-    mocks.findNearbyDrivers.mockResolvedValue([]);
+  it("builds a deterministic strict stale-claim cutoff from offer timeouts", async () => {
+    const claimedAt = new Date("2026-09-16T12:00:00.000Z");
+    vi.useFakeTimers();
 
-    await dispatchTrip("trip-1");
+    try {
+      vi.setSystemTime(claimedAt);
+      mocks.findNearbyDrivers.mockResolvedValue([]);
 
-    const claimCall = mocks.tripUpdateMany.mock.calls[0][0];
-    const searchingBranch = claimCall.where.OR.find(
-      (branch: any) => branch.dispatchStatus === "SEARCHING"
-    );
-    const staleCondition = searchingBranch?.OR.find(
-      (condition: any) =>
-        condition.dispatchClaimedAt?.lt instanceof Date
-    );
+      await dispatchTrip("trip-1");
 
-    expect(searchingBranch).toEqual(
-      expect.objectContaining({
-        dispatchStatus: "SEARCHING",
-      })
-    );
-    expect(staleCondition?.dispatchClaimedAt.lt).toBeInstanceOf(Date);
-    expect(claimCall.data.dispatchClaimToken).toEqual(expect.any(String));
-    expect(claimCall.data.dispatchClaimedAt).toBeInstanceOf(Date);
+      const claimCall = mocks.tripUpdateMany.mock.calls[0][0];
+      const searchingBranch = claimCall.where.OR.find(
+        (branch: any) => branch.dispatchStatus === "SEARCHING"
+      );
+      const staleCondition = searchingBranch?.OR.find(
+        (condition: any) =>
+          condition.dispatchClaimedAt?.lt instanceof Date
+      );
+      const staleBefore = staleCondition.dispatchClaimedAt.lt as Date;
+      const leaseMs =
+        Math.max(DAY_JOB_TIMEOUT_SECONDS, NIGHT_JOB_TIMEOUT_SECONDS) *
+        2 *
+        1000;
 
-    expect(
-      claimCall.data.dispatchClaimedAt.getTime() -
-        staleCondition.dispatchClaimedAt.lt.getTime()
-    ).toBe(5 * 60 * 1000);
+      expect(claimCall.data.dispatchClaimedAt).toEqual(claimedAt);
+      expect(staleCondition).toEqual({
+        dispatchClaimedAt: { lt: staleBefore },
+      });
+      expect(staleBefore).toEqual(
+        new Date(claimedAt.getTime() - leaseMs)
+      );
+      expect(claimedAt.getTime() - staleBefore.getTime()).toBe(90_000);
+
+      const olderClaim = new Date(staleBefore.getTime() - 1);
+      const boundaryClaim = new Date(staleBefore);
+      const newerClaim = new Date(staleBefore.getTime() + 1);
+
+      expect(olderClaim.getTime()).toBeLessThan(staleBefore.getTime());
+      expect(boundaryClaim.getTime()).not.toBeLessThan(staleBefore.getTime());
+      expect(newerClaim.getTime()).not.toBeLessThan(staleBefore.getTime());
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("returns FAILED when a lost claim reflects lifecycle progress", async () => {
