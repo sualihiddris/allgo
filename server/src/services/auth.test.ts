@@ -1,0 +1,508 @@
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
+
+/**
+ * Patch 19: atomic OTP verification attempt accounting.
+ *
+ * Every value referenced inside a vi.mock() factory is created through
+ * vi.hoisted() so the hoisted mock registration cannot touch an
+ * uninitialized top-level binding.
+ */
+const mocks = vi.hoisted(() => ({
+  otpFindFirst: vi.fn(),
+  otpUpdate: vi.fn(),
+  otpUpdateMany: vi.fn(),
+  otpCreate: vi.fn(),
+  userFindUnique: vi.fn(),
+  userCreate: vi.fn(),
+  userUpdate: vi.fn(),
+  refreshTokenCreate: vi.fn(),
+  redisIncr: vi.fn(),
+  redisExpire: vi.fn(),
+  redisDel: vi.fn(),
+  sendOtpSms: vi.fn(),
+  generateTokens: vi.fn(),
+  generatePendingTotpToken: vi.fn(),
+  verifyToken: vi.fn(),
+  normalizeGhanaPhone: vi.fn(),
+  generateOtp: vi.fn(),
+  generateReferralCode: vi.fn(),
+}));
+
+vi.mock("../config", () => ({
+  prisma: {
+    otpCode: {
+      findFirst: mocks.otpFindFirst,
+      update: mocks.otpUpdate,
+      updateMany: mocks.otpUpdateMany,
+      create: mocks.otpCreate,
+    },
+    user: {
+      findUnique: mocks.userFindUnique,
+      create: mocks.userCreate,
+      update: mocks.userUpdate,
+    },
+    refreshToken: {
+      create: mocks.refreshTokenCreate,
+    },
+  },
+  redis: {
+    incr: mocks.redisIncr,
+    expire: mocks.redisExpire,
+    del: mocks.redisDel,
+  },
+}));
+
+vi.mock("./sms", () => ({
+  sendOtpSms: mocks.sendOtpSms,
+}));
+
+vi.mock("./jwt", () => ({
+  generateTokens: mocks.generateTokens,
+  generatePendingTotpToken: mocks.generatePendingTotpToken,
+  verifyToken: mocks.verifyToken,
+}));
+
+vi.mock("../utils", () => ({
+  normalizeGhanaPhone: mocks.normalizeGhanaPhone,
+  generateOtp: mocks.generateOtp,
+  generateReferralCode: mocks.generateReferralCode,
+}));
+
+// createError is a pure error factory; use the real implementation so the
+// tests assert on the genuine error codes/messages produced in production.
+
+import { verifyOtp } from "./auth";
+
+const PHONE = "0244123456";
+const NORMALIZED = "+233244123456";
+const RIGHT_CODE = "123456";
+const WRONG_CODE = "999999";
+const MAX_ATTEMPTS = 3;
+
+interface OtpRow {
+  id: string;
+  phone: string;
+  code: string;
+  attempts: number;
+  usedAt: Date | null;
+  expiresAt: Date;
+}
+
+function makeOtpRow(overrides: Partial<OtpRow> = {}): OtpRow {
+  return {
+    id: "otp-1",
+    phone: NORMALIZED,
+    code: RIGHT_CODE,
+    attempts: 0,
+    usedAt: null,
+    expiresAt: new Date(Date.now() + 10 * 60 * 1000),
+    ...overrides,
+  };
+}
+
+/**
+ * Predicate matcher mirroring Prisma updateMany semantics against the row,
+ * including { gt } / { lt } / { gte } operators on attempts/expiresAt.
+ */
+function matchesWhere(row: OtpRow, where: any): boolean {
+  if (where.id !== undefined && row.id !== where.id) return false;
+  if (where.phone !== undefined && row.phone !== where.phone) return false;
+  if (where.code !== undefined && row.code !== where.code) return false;
+  if ("usedAt" in where && row.usedAt !== where.usedAt) return false;
+  if (where.expiresAt !== undefined) {
+    if (typeof where.expiresAt === "object" && "gt" in where.expiresAt) {
+      if (!(row.expiresAt > where.expiresAt.gt)) return false;
+    } else if (row.expiresAt !== where.expiresAt) return false;
+  }
+  if (where.attempts !== undefined) {
+    const a = where.attempts;
+    if (typeof a === "object") {
+      if ("lt" in a && !(row.attempts < a.lt)) return false;
+      if ("gte" in a && !(row.attempts >= a.gte)) return false;
+      if ("gt" in a && !(row.attempts > a.gt)) return false;
+    } else if (row.attempts !== a) return false;
+  }
+  return true;
+}
+
+/**
+ * Statefully model a single OtpCode row. The updateMany implementation
+ * checks the predicate and applies the mutation synchronously with no
+ * intervening await, reproducing the DB row-level atomicity the
+ * production fence depends on.
+ */
+function installStatefulOtpRow(row: OtpRow, codeLookupMiss = false) {
+  mocks.otpFindFirst.mockImplementation(async ({ where, orderBy }: any) => {
+    // Exact-code lookup (first findFirst in verifyOtp carries orderBy).
+    if (orderBy) {
+      if (!codeLookupMiss && matchesWhere(row, where)) return { ...row };
+      return null;
+    }
+    // Active-OTP lookup for wrong-attempt accounting.
+    if (matchesWhere(row, where)) return { ...row };
+    return null;
+  });
+
+  mocks.otpUpdateMany.mockImplementation(async ({ where, data }: any) => {
+    if (!matchesWhere(row, where)) return { count: 0 };
+    if (data.attempts && typeof data.attempts === "object" && "increment" in data.attempts) {
+      row.attempts += data.attempts.increment;
+    } else if (typeof data.attempts === "number") {
+      row.attempts = data.attempts;
+    }
+    if ("usedAt" in data) row.usedAt = data.usedAt;
+    return { count: 1 };
+  });
+
+  mocks.otpUpdate.mockImplementation(async ({ where, data }: any) => {
+    if (row.id !== where.id) return null;
+    if ("usedAt" in data) row.usedAt = data.usedAt;
+    if (typeof data?.attempts === "number") row.attempts = data.attempts;
+    return { ...row };
+  });
+
+  return row;
+}
+
+function expectInvalidOtp(error: any) {
+  expect(error).toBeTruthy();
+  expect(error.statusCode ?? error.status).toBe(400);
+  expect(error.code).toBe("INVALID_OTP");
+  expect(error.message).toBe("Invalid or expired OTP");
+}
+
+function expectMaxAttemptsError(error: any) {
+  expect(error).toBeTruthy();
+  expect(error.statusCode ?? error.status).toBe(400);
+  expect(error.code).toBe("OTP_MAX_ATTEMPTS");
+  expect(error.message).toBe("Too many attempts. Please request a new code.");
+}
+
+async function wrongAttempt(): Promise<any> {
+  try {
+    await verifyOtp(PHONE, WRONG_CODE);
+    return null;
+  } catch (error) {
+    return error;
+  }
+}
+
+beforeEach(() => {
+  vi.resetAllMocks();
+
+  mocks.normalizeGhanaPhone.mockReturnValue(NORMALIZED);
+  mocks.generateTokens.mockReturnValue({
+    accessToken: "access-token",
+    refreshToken: "refresh-token",
+    expiresIn: 900,
+  });
+  mocks.generatePendingTotpToken.mockReturnValue("pending-token");
+  mocks.redisDel.mockResolvedValue(1);
+  mocks.refreshTokenCreate.mockResolvedValue({ id: "rt-1" });
+});
+afterEach(() => {
+  vi.useRealTimers();
+});
+
+describe("verifyOtp wrong-attempt accounting (atomic)", () => {
+  it("first wrong attempt increments atomically and returns INVALID_OTP, never prisma.otpCode.update", async () => {
+    const row = installStatefulOtpRow(makeOtpRow({ attempts: 0 }));
+
+    const error = await wrongAttempt();
+
+    expectInvalidOtp(error);
+    expect(mocks.otpUpdateMany).toHaveBeenCalledTimes(1);
+
+    const call = mocks.otpUpdateMany.mock.calls[0][0];
+    // Guarded predicate: same OTP, still active, below terminal slot.
+    expect(call.where.id).toBe("otp-1");
+    expect(call.where.usedAt).toBeNull();
+    expect(call.where.expiresAt).toEqual({ gt: expect.any(Date) });
+    expect(call.where.attempts).toEqual({ lt: MAX_ATTEMPTS - 1 });
+    // Atomic increment, never an absolute computed value.
+    expect(call.data.attempts).toEqual({ increment: 1 });
+    expect(typeof call.data.attempts).not.toBe("number");
+
+    // Wrong-attempt accounting must NEVER use the single-row otpCode.update
+    // path - that is reserved for marking a successfully verified OTP used.
+    expect(mocks.otpUpdate).not.toHaveBeenCalled();
+
+    expect(row.attempts).toBe(1);
+    expect(row.usedAt).toBeNull();
+  });
+
+  it("second wrong attempt increments atomically and returns INVALID_OTP", async () => {
+    const row = installStatefulOtpRow(makeOtpRow({ attempts: 1 }));
+
+    const error = await wrongAttempt();
+
+    expectInvalidOtp(error);
+    expect(mocks.otpUpdateMany).toHaveBeenCalledTimes(1);
+    expect(mocks.otpUpdateMany.mock.calls[0][0].data.attempts).toEqual({ increment: 1 });
+    expect(mocks.otpUpdate).not.toHaveBeenCalled();
+    expect(row.attempts).toBe(2);
+    expect(row.usedAt).toBeNull();
+  });
+
+  it("terminal wrong attempt fails increment guard, invalidates via guarded update, throws OTP_MAX_ATTEMPTS", async () => {
+    const row = installStatefulOtpRow(makeOtpRow({ attempts: MAX_ATTEMPTS - 1 }));
+
+    const error = await wrongAttempt();
+
+    expectMaxAttemptsError(error);
+    expect(mocks.otpUpdateMany).toHaveBeenCalledTimes(2);
+
+    const incrementCall = mocks.otpUpdateMany.mock.calls[0][0];
+    expect(incrementCall.where.attempts).toEqual({ lt: MAX_ATTEMPTS - 1 });
+    expect(incrementCall.data.attempts).toEqual({ increment: 1 });
+
+    const invalidateCall = mocks.otpUpdateMany.mock.calls[1][0];
+    expect(invalidateCall.where.id).toBe("otp-1");
+    expect(invalidateCall.where.usedAt).toBeNull();
+    expect(invalidateCall.where.expiresAt).toEqual({ gt: expect.any(Date) });
+    expect(invalidateCall.where.attempts).toEqual({ gte: MAX_ATTEMPTS - 1 });
+    expect(invalidateCall.data.usedAt).toEqual(expect.any(Date));
+
+    expect(row.usedAt).not.toBeNull();
+    expect(row.attempts).toBe(MAX_ATTEMPTS - 1);
+  });
+
+  it("concurrent wrong attempts from attempts=0 lose no increment and end invalidated", async () => {
+    const row = installStatefulOtpRow(makeOtpRow({ attempts: 0 }));
+
+    const results = await Promise.all([
+      wrongAttempt(),
+      wrongAttempt(),
+      wrongAttempt(),
+    ]);
+
+    const invalidCount = results.filter(
+      (e) => e && e.code === "INVALID_OTP"
+    ).length;
+    const maxCount = results.filter(
+      (e) => e && e.code === "OTP_MAX_ATTEMPTS"
+    ).length;
+
+    // Two non-terminal increments succeed, exactly one terminal
+    // invalidation succeeds.
+    expect(invalidCount).toBe(2);
+    expect(maxCount).toBe(1);
+
+    const terminalError = results.find((e) => e && e.code === "OTP_MAX_ATTEMPTS");
+    expectMaxAttemptsError(terminalError);
+    for (const e of results) {
+      if (e && e.code === "INVALID_OTP") expectInvalidOtp(e);
+    }
+
+    // No lost increment and no absolute write: final state is exactly
+    // the two successful atomic increments plus terminal invalidation.
+    for (const call of mocks.otpUpdateMany.mock.calls) {
+      const data = call[0].data;
+      if (data.attempts !== undefined) {
+        expect(data.attempts).toEqual({ increment: 1 });
+      }
+    }
+    expect(row.attempts).toBe(2);
+    expect(row.attempts).not.toBe(1);
+    expect(row.usedAt).not.toBeNull();
+  });
+
+  it("wrong attempts after invalidation cannot revive, reset or mutate the OTP", async () => {
+    const row = installStatefulOtpRow(
+      makeOtpRow({ attempts: 2, usedAt: new Date() })
+    );
+    const usedAtBefore = row.usedAt;
+    const attemptsBefore = row.attempts;
+
+    const errors = await Promise.all([wrongAttempt(), wrongAttempt()]);
+
+    for (const e of errors) expectInvalidOtp(e);
+
+    // No active OTP is found; the guarded mutations never even run,
+    // and the row is untouched.
+    expect(row.usedAt).toBe(usedAtBefore);
+    expect(row.attempts).toBe(attemptsBefore);
+  });
+
+  it("guards protect a request that obtained existingOtp.id and then loses the usedAt race post-lookup", async () => {
+    // Real post-lookup race: the exact-code lookup misses, the active-OTP
+    // lookup SUCCEEDS and returns a snapshot, and only AFTER that point
+    // (before the first guarded updateMany executes) does shared state
+    // change to usedAt != null - e.g. a concurrent request successfully
+    // verified the OTP in the interleaving window.
+    const row = makeOtpRow({ attempts: 1 });
+
+    // Track whether the active-OTP lookup has completed yet. Only once it
+    // has returned do we flip usedAt, so the test proves the request
+    // already held existingOtp.id when it lost the race.
+    let activeLookupDone = false;
+
+    mocks.otpFindFirst.mockImplementation(async ({ where, orderBy }: any) => {
+      // Exact-code lookup: misses (wrong code submitted).
+      if (orderBy) return null;
+      // Active-OTP lookup: succeeds, returning a snapshot of the row.
+      if (matchesWhere(row, where)) {
+        const snapshot = { ...row };
+        activeLookupDone = true;
+        // Interleaving: immediately after this lookup succeeds, another
+        // request consumes the OTP before our first guarded mutation runs.
+        row.usedAt = new Date();
+        return snapshot;
+      }
+      return null;
+    });
+
+    // The guarded mutations evaluate predicates against CURRENT shared
+    // state - exactly what the real DB does with row-level updateMany.
+    mocks.otpUpdateMany.mockImplementation(async ({ where }: any) => {
+      // Sanity: this test's premise is that the snapshot lookup happened
+      // BEFORE any guarded mutation ran.
+      expect(activeLookupDone).toBe(true);
+      if (!matchesWhere(row, where)) return { count: 0 };
+      return { count: 1 };
+    });
+
+    const error = await wrongAttempt();
+
+    // Both guarded mutations lost: the usedAt fence rejected them even
+    // though this request had already obtained existingOtp.id.
+    expect(activeLookupDone).toBe(true);
+    expect(mocks.otpUpdateMany).toHaveBeenCalledTimes(2);
+    expect(mocks.otpUpdateMany.mock.calls[0][0].where.usedAt).toBeNull();
+    expect(mocks.otpUpdateMany.mock.calls[1][0].where.usedAt).toBeNull();
+
+    // Plain INVALID_OTP, not OTP_MAX_ATTEMPTS: the terminal transition did
+    // not win either.
+    expectInvalidOtp(error);
+
+    // Nothing overwritten/reset: attempts untouched, usedAt owned by the
+    // winning request.
+    expect(row.attempts).toBe(1);
+    expect(row.usedAt).not.toBeNull();
+    expect(mocks.otpUpdate).not.toHaveBeenCalled();
+  });
+
+  it("terminal guard uses a fresh expiry timestamp when the OTP expires between the two guards", async () => {
+    // Exact expiry edge: attempts already at OTP_MAX_ATTEMPTS - 1. The
+    // increment guard fails on attempts; the clock then advances past
+    // expiresAt BEFORE the terminal invalidation. If production reused the
+    // pre-increment Date, the terminal guard would still match and wrongly
+    // invalidate an already-expired OTP with OTP_MAX_ATTEMPTS. Using a
+    // fresh Date, the terminal guard must fail and the OTP must remain
+    // unmodified, producing plain INVALID_OTP.
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-08-19T12:00:00.000Z"));
+
+    const expiresAt = new Date("2026-08-19T12:00:05.000Z"); // +5s
+    const row = makeOtpRow({ attempts: MAX_ATTEMPTS - 1, expiresAt });
+
+    mocks.otpFindFirst.mockImplementation(async ({ where, orderBy }: any) => {
+      if (orderBy) return null;
+      if (matchesWhere(row, where)) return { ...row };
+      return null;
+    });
+
+    let updateManyCalls = 0;
+    mocks.otpUpdateMany.mockImplementation(async ({ where, data }: any) => {
+      updateManyCalls += 1;
+      if (updateManyCalls === 1) {
+        // Increment guard fails (attempts already at MAX-1 - matchesWhere
+        // enforces this via the { lt } predicate anyway).
+        const matched = matchesWhere(row, where);
+        expect(matched).toBe(false);
+        // Simulate the await taking long enough for the OTP to expire
+        // before the terminal guard runs.
+        vi.setSystemTime(new Date("2026-08-19T12:00:06.000Z"));
+        return { count: 0 };
+      }
+      // Terminal guard: with fake time now past expiresAt, the predicate
+      // can only still match if production reused the STALE pre-increment
+      // Date. Assert it does not match, i.e. the fence used a fresh Date.
+      const matched = matchesWhere(row, where);
+      expect(matched).toBe(false);
+      expect(where.expiresAt.gt.getTime()).toBeGreaterThan(
+        new Date("2026-08-19T12:00:00.000Z").getTime()
+      );
+      if (matched) {
+        if ("usedAt" in data) row.usedAt = data.usedAt;
+        return { count: 1 };
+      }
+      return { count: 0 };
+    });
+
+    const error = await wrongAttempt();
+
+    // Fresh-fence outcome: INVALID_OTP, NOT OTP_MAX_ATTEMPTS.
+    expectInvalidOtp(error);
+    expect(mocks.otpUpdateMany).toHaveBeenCalledTimes(2);
+
+    // The OTP row is completely unmodified by this request.
+    expect(row.attempts).toBe(MAX_ATTEMPTS - 1);
+    expect(row.usedAt).toBeNull();
+    expect(mocks.otpUpdate).not.toHaveBeenCalled();
+  });
+
+  it("stale wrong request after usedAt becomes non-null cannot mutate the OTP", async () => {
+    const row = installStatefulOtpRow(makeOtpRow({ attempts: 1 }));
+
+    // Simulate the OTP being consumed by a successful verification
+    // before this stale wrong attempt lands.
+    row.usedAt = new Date();
+    const usedAtBefore = row.usedAt;
+
+    const error = await wrongAttempt();
+
+    expectInvalidOtp(error);
+    expect(row.attempts).toBe(1);
+    expect(row.usedAt).toBe(usedAtBefore);
+  });
+
+  it("race loser after terminal invalidation falls through to INVALID_OTP without mutation", async () => {
+    const row = installStatefulOtpRow(makeOtpRow({ attempts: MAX_ATTEMPTS - 1 }));
+
+    // Terminal invalidation wins for the other request before this one
+    // runs its guards.
+    row.usedAt = new Date();
+
+    const error = await wrongAttempt();
+
+    expectInvalidOtp(error);
+    expect(row.attempts).toBe(MAX_ATTEMPTS - 1);
+  });
+
+  it("successful verification does not perform wrong-attempt accounting", async () => {
+    installStatefulOtpRow(makeOtpRow({ attempts: 0 }));
+    mocks.userFindUnique.mockResolvedValue({
+      id: "user-1",
+      phone: NORMALIZED,
+      name: "Customer",
+      role: "CUSTOMER",
+      isActive: true,
+      customer: { id: "cust-1" },
+      admin: null,
+    });
+
+    const result = await verifyOtp(PHONE, RIGHT_CODE);
+
+    expect(result.success).toBe(true);
+    expect(result.tokens?.accessToken).toBe("access-token");
+
+    // Success path marks the exact OTP used via otpCode.update and never
+    // touches updateMany wrong-attempt accounting.
+    expect(mocks.otpUpdate).toHaveBeenCalledTimes(1);
+    expect(mocks.otpUpdate).toHaveBeenCalledWith({
+      where: { id: "otp-1" },
+      data: { usedAt: expect.any(Date) },
+    });
+    expect(mocks.otpUpdateMany).not.toHaveBeenCalled();
+  });
+
+  it("preserves exact INVALID_OTP code/message on a plain wrong code with no active OTP", async () => {
+    // No active OTP row at all.
+    installStatefulOtpRow(makeOtpRow({ usedAt: new Date() }));
+
+    const error = await wrongAttempt();
+
+    expectInvalidOtp(error);
+  });
+});
