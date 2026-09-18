@@ -89,6 +89,81 @@ export async function requestOtp(phone: string): Promise<OtpRequestResult> {
 }
 
 /**
+ * Record a wrong OTP attempt using ONLY database-atomic guarded mutations.
+ *
+ * Concurrency fence: never read -> compute -> write the attempt counter.
+ * Under concurrency the counter may only move through two mutually
+ * exclusive guarded updateMany transitions:
+ *
+ *   1. increment while attempts < MAX-1  (guarded atomic increment)
+ *   2. invalidate while attempts >= MAX-1 (guarded atomic terminal mark)
+ *
+ * Each predicate also re-checks usedAt/expiresAt, so a request that loses
+ * the race against a successful verification, an expiry, or another
+ * request's invalidation mutates nothing and falls through to the normal
+ * INVALID_OTP path.
+ *
+ * Each guarded mutation evaluates expiry against its own FRESH timestamp:
+ * the increment await may itself take long enough for the OTP to expire,
+ * so the terminal invalidation must not reuse the pre-increment Date or
+ * it could mark an already-expired OTP used / over-count attempts against
+ * a stale fence.
+ */
+async function recordWrongOtpAttempt(existingOtpId: string): Promise<void> {
+  // Fresh fence for the increment guard.
+  const incrementNow = new Date();
+
+  // Guarded atomic increment: succeeds only while the OTP is still active
+  // and has not yet reached the final (MAX-1) wrong-attempt slot.
+  const incremented = await prisma.otpCode.updateMany({
+    where: {
+      id: existingOtpId,
+      usedAt: null,
+      expiresAt: { gt: incrementNow },
+      attempts: { lt: OTP_MAX_ATTEMPTS - 1 },
+    },
+    data: {
+      attempts: { increment: 1 },
+    },
+  });
+
+  if (incremented.count === 1) {
+    // Non-terminal wrong attempt.
+    return;
+  }
+
+  // The increment guard failed: either the OTP was already at the terminal
+  // slot, or another request already used/expired/invalidated it. Try the
+  // terminal transition - invalidating THIS otp only if it is still the
+  // live one sitting at the final allowed wrong attempt.
+  //
+  // Fresh fence: time passed while the increment awaited, and the OTP may
+  // legitimately have expired in between. Re-evaluate expiry against NOW,
+  // not against the stale incrementNow, so an expired OTP is left alone.
+  const terminalNow = new Date();
+
+  const invalidated = await prisma.otpCode.updateMany({
+    where: {
+      id: existingOtpId,
+      usedAt: null,
+      expiresAt: { gt: terminalNow },
+      attempts: { gte: OTP_MAX_ATTEMPTS - 1 },
+    },
+    data: {
+      usedAt: new Date(),
+    },
+  });
+
+  if (invalidated.count === 1) {
+    throw createError("Too many attempts. Please request a new code.", 400, "OTP_MAX_ATTEMPTS");
+  }
+
+  // Both guards lost the race: another request already handled this OTP
+  // (used, expired, or invalidated). Do not mutate; fall through to the
+  // normal INVALID_OTP behavior in the caller.
+}
+
+/**
  * Verify OTP and return tokens
  */
 export async function verifyOtp(
@@ -114,7 +189,8 @@ export async function verifyOtp(
   });
 
   if (!otp) {
-    // Increment attempts if OTP exists but code is wrong
+    // Wrong code: find the currently active OTP for this phone and record
+    // the attempt atomically (see recordWrongOtpAttempt).
     const existingOtp = await prisma.otpCode.findFirst({
       where: {
         phone: normalizedPhone,
@@ -124,21 +200,7 @@ export async function verifyOtp(
     });
 
     if (existingOtp) {
-      const newAttempts = existingOtp.attempts + 1;
-      
-      if (newAttempts >= OTP_MAX_ATTEMPTS) {
-        // Invalidate OTP after max attempts
-        await prisma.otpCode.update({
-          where: { id: existingOtp.id },
-          data: { usedAt: new Date() },
-        });
-        throw createError("Too many attempts. Please request a new code.", 400, "OTP_MAX_ATTEMPTS");
-      }
-
-      await prisma.otpCode.update({
-        where: { id: existingOtp.id },
-        data: { attempts: newAttempts },
-      });
+      await recordWrongOtpAttempt(existingOtp.id);
     }
 
     throw createError("Invalid or expired OTP", 400, "INVALID_OTP");
