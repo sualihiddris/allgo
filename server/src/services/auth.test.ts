@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 
 /**
- * Patch 19: atomic OTP verification attempt accounting.
+ * Patch 19/20: atomic OTP attempt accounting and successful consumption.
  *
  * Every value referenced inside a vi.mock() factory is created through
  * vi.hoisted() so the hoisted mock registration cannot touch an
@@ -204,7 +204,7 @@ afterEach(() => {
   vi.useRealTimers();
 });
 
-describe("verifyOtp wrong-attempt accounting (atomic)", () => {
+describe("verifyOtp OTP concurrency guards (atomic)", () => {
   it("first wrong attempt increments atomically and returns INVALID_OTP, never prisma.otpCode.update", async () => {
     const row = installStatefulOtpRow(makeOtpRow({ attempts: 0 }));
 
@@ -470,8 +470,8 @@ describe("verifyOtp wrong-attempt accounting (atomic)", () => {
     expect(row.attempts).toBe(MAX_ATTEMPTS - 1);
   });
 
-  it("successful verification does not perform wrong-attempt accounting", async () => {
-    installStatefulOtpRow(makeOtpRow({ attempts: 0 }));
+  it("successful verification atomically consumes the exact OTP before authentication side effects", async () => {
+    const row = installStatefulOtpRow(makeOtpRow({ attempts: 0 }));
     mocks.userFindUnique.mockResolvedValue({
       id: "user-1",
       phone: NORMALIZED,
@@ -486,15 +486,155 @@ describe("verifyOtp wrong-attempt accounting (atomic)", () => {
 
     expect(result.success).toBe(true);
     expect(result.tokens?.accessToken).toBe("access-token");
+    expect(mocks.otpUpdateMany).toHaveBeenCalledTimes(1);
 
-    // Success path marks the exact OTP used via otpCode.update and never
-    // touches updateMany wrong-attempt accounting.
-    expect(mocks.otpUpdate).toHaveBeenCalledTimes(1);
-    expect(mocks.otpUpdate).toHaveBeenCalledWith({
-      where: { id: "otp-1" },
-      data: { usedAt: expect.any(Date) },
+    const consumeCall = mocks.otpUpdateMany.mock.calls[0][0];
+    expect(consumeCall.where).toEqual({
+      id: "otp-1",
+      usedAt: null,
+      expiresAt: { gt: expect.any(Date) },
     });
-    expect(mocks.otpUpdateMany).not.toHaveBeenCalled();
+    expect(consumeCall.data).toEqual({ usedAt: expect.any(Date) });
+    expect(consumeCall.where.attempts).toBeUndefined();
+    expect(consumeCall.data.attempts).toBeUndefined();
+    expect(mocks.otpUpdate).not.toHaveBeenCalled();
+
+    expect(row.usedAt).not.toBeNull();
+    expect(mocks.userFindUnique).toHaveBeenCalledTimes(1);
+    expect(mocks.redisDel).toHaveBeenCalledTimes(1);
+    expect(mocks.generateTokens).toHaveBeenCalledTimes(1);
+    expect(mocks.refreshTokenCreate).toHaveBeenCalledTimes(1);
+  });
+
+  it("two concurrent correct verifications consume the OTP exactly once", async () => {
+    const row = installStatefulOtpRow(makeOtpRow({ attempts: 0 }));
+
+    let exactLookups = 0;
+    let releaseBoth!: () => void;
+    const bothLookedUp = new Promise<void>((resolve) => {
+      releaseBoth = resolve;
+    });
+
+    mocks.otpFindFirst.mockImplementation(async ({ where, orderBy }: any) => {
+      if (!orderBy) return null;
+      if (!matchesWhere(row, where)) return null;
+
+      const snapshot = { ...row };
+      exactLookups += 1;
+      if (exactLookups === 2) releaseBoth();
+      await bothLookedUp;
+      return snapshot;
+    });
+
+    mocks.userFindUnique.mockResolvedValue({
+      id: "user-1",
+      phone: NORMALIZED,
+      name: "Customer",
+      role: "CUSTOMER",
+      isActive: true,
+      customer: { id: "cust-1" },
+      admin: null,
+    });
+
+    const results = await Promise.allSettled([
+      verifyOtp(PHONE, RIGHT_CODE),
+      verifyOtp(PHONE, RIGHT_CODE),
+    ]);
+
+    expect(exactLookups).toBe(2);
+    const fulfilled = results.filter((result) => result.status === "fulfilled");
+    const rejected = results.filter((result) => result.status === "rejected");
+
+    expect(fulfilled).toHaveLength(1);
+    expect(rejected).toHaveLength(1);
+
+    if (fulfilled[0].status === "fulfilled") {
+      expect(fulfilled[0].value.success).toBe(true);
+    }
+    if (rejected[0].status === "rejected") {
+      expectInvalidOtp(rejected[0].reason);
+    }
+
+    expect(mocks.otpUpdateMany).toHaveBeenCalledTimes(2);
+    expect(row.usedAt).not.toBeNull();
+    expect(mocks.otpUpdate).not.toHaveBeenCalled();
+    expect(mocks.userFindUnique).toHaveBeenCalledTimes(1);
+    expect(mocks.redisDel).toHaveBeenCalledTimes(1);
+    expect(mocks.generateTokens).toHaveBeenCalledTimes(1);
+    expect(mocks.refreshTokenCreate).toHaveBeenCalledTimes(1);
+  });
+
+  it("correct verification loses cleanly if terminal invalidation wins after lookup", async () => {
+    const row = installStatefulOtpRow(makeOtpRow({ attempts: 2 }));
+    const terminalUsedAt = new Date(Date.now() + 1_000);
+
+    mocks.otpFindFirst.mockImplementation(async ({ where, orderBy }: any) => {
+      if (!orderBy) return null;
+      if (!matchesWhere(row, where)) return null;
+
+      const snapshot = { ...row };
+      row.usedAt = terminalUsedAt;
+      return snapshot;
+    });
+
+    let error: any;
+    try {
+      await verifyOtp(PHONE, RIGHT_CODE);
+    } catch (caught) {
+      error = caught;
+    }
+
+    expectInvalidOtp(error);
+    expect(mocks.otpUpdateMany).toHaveBeenCalledTimes(1);
+    expect(row.usedAt).toBe(terminalUsedAt);
+    expect(mocks.otpUpdate).not.toHaveBeenCalled();
+    expect(mocks.userFindUnique).not.toHaveBeenCalled();
+    expect(mocks.redisDel).not.toHaveBeenCalled();
+    expect(mocks.generateTokens).not.toHaveBeenCalled();
+    expect(mocks.refreshTokenCreate).not.toHaveBeenCalled();
+  });
+
+  it("successful verification uses a fresh expiry fence at consume time", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-09-18T12:00:00.000Z"));
+
+    const row = installStatefulOtpRow(
+      makeOtpRow({
+        attempts: 0,
+        expiresAt: new Date("2026-09-18T12:00:05.000Z"),
+      })
+    );
+
+    mocks.otpFindFirst.mockImplementation(async ({ where, orderBy }: any) => {
+      if (!orderBy) return null;
+      if (!matchesWhere(row, where)) return null;
+
+      const snapshot = { ...row };
+      vi.setSystemTime(new Date("2026-09-18T12:00:06.000Z"));
+      return snapshot;
+    });
+
+    let error: any;
+    try {
+      await verifyOtp(PHONE, RIGHT_CODE);
+    } catch (caught) {
+      error = caught;
+    }
+
+    expectInvalidOtp(error);
+    expect(mocks.otpUpdateMany).toHaveBeenCalledTimes(1);
+
+    const consumeCall = mocks.otpUpdateMany.mock.calls[0][0];
+    expect(consumeCall.where.expiresAt.gt).toEqual(
+      new Date("2026-09-18T12:00:06.000Z")
+    );
+
+    expect(row.usedAt).toBeNull();
+    expect(mocks.otpUpdate).not.toHaveBeenCalled();
+    expect(mocks.userFindUnique).not.toHaveBeenCalled();
+    expect(mocks.redisDel).not.toHaveBeenCalled();
+    expect(mocks.generateTokens).not.toHaveBeenCalled();
+    expect(mocks.refreshTokenCreate).not.toHaveBeenCalled();
   });
 
   it("preserves exact INVALID_OTP code/message on a plain wrong code with no active OTP", async () => {
