@@ -14,8 +14,8 @@ export function createApp(): Application {
   // Security middleware
   app.use(helmet());
   app.use(cors({
-    origin: env.NODE_ENV === "production" 
-      ? ["https://admin.allgo.com"] 
+    origin: env.NODE_ENV === "production"
+      ? env.CORS_ORIGINS
       : "*",
     credentials: true,
   }));
