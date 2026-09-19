@@ -1,6 +1,6 @@
 import { z } from "zod";
 
-const envSchema = z.object({
+export const envSchema = z.object({
   NODE_ENV: z.enum(["development", "production", "test"]).default("development"),
 
   ENABLE_DEV_LOGIN: z
@@ -13,8 +13,10 @@ const envSchema = z.object({
   // Database
   DATABASE_URL: z.string(),
   
-  // Redis (optional for development)
-  REDIS_URL: z.string().optional().default(""),
+  // Redis may fall back to the in-memory store outside production.
+  // Production requires a real shared Redis instance because OTP issuance,
+  // dispatch coordination, and Socket.IO cross-instance behavior depend on it.
+  REDIS_URL: z.string().trim().optional().default(""),
   
   // JWT
     JWT_SECRET: z.string().min(16),
@@ -32,6 +34,14 @@ const envSchema = z.object({
   // Rate limiting
   OTP_RATE_LIMIT_WINDOW_MS: z.coerce.number().default(3600000), // 1 hour
   OTP_RATE_LIMIT_MAX: z.coerce.number().default(5),
+}).superRefine((values, ctx) => {
+  if (values.NODE_ENV === "production" && !values.REDIS_URL) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["REDIS_URL"],
+      message: "REDIS_URL is required in production",
+    });
+  }
 });
 
 function loadEnv() {
