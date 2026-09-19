@@ -41,6 +41,10 @@ model RefreshToken {
 model OtpCode {
   id        String    @id @default(cuid())
   phone     String
+  // Non-null only while this row is the currently active OTP for the phone.
+  // MySQL permits multiple NULL values in a unique index, so consumed /
+  // invalidated rows can coexist while at most one active row owns a phone.
+  activeKey String?   @unique @db.VarChar(20)
   code      String
   attempts  Int       @default(0)
   expiresAt DateTime
