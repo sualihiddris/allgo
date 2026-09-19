@@ -1,0 +1,65 @@
+name: Feature request
+description: Propose a product or engineering improvement
+title: "[Feature]: "
+labels: []
+body:
+  - type: dropdown
+    id: component
+    attributes:
+      label: Area
+      options:
+        - Customer experience
+        - Driver experience
+        - Admin operations
+        - Delivery
+        - Assisted call-in booking
+        - Dispatch / real-time
+        - Payments / subscriptions
+        - Security / reliability
+        - Developer experience
+        - Other
+    validations:
+      required: true
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem to solve
+      description: Describe the user or operational problem before proposing a solution.
+    validations:
+      required: true
+
+  - type: textarea
+    id: users
+    attributes:
+      label: Who is affected?
+      description: Which users, operators, drivers, administrators, or communities benefit?
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed solution
+      description: Describe the smallest useful version of the change.
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+
+  - type: textarea
+    id: risks
+    attributes:
+      label: Risks and constraints
+      description: Consider safety, security, privacy, connectivity, device limitations, operational burden, and cost.
+
+  - type: checkboxes
+    id: scope
+    attributes:
+      label: Scope check
+      options:
+        - label: This request describes a concrete problem, not only a preferred implementation.
+          required: true

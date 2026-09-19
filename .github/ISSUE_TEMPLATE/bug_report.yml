@@ -1,0 +1,90 @@
+name: Bug report
+description: Report a reproducible defect in AllGo
+title: "[Bug]: "
+labels: []
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting a problem. Do not include passwords, API keys, access tokens, OTPs, customer data, or exploitable security details here. Use the security policy for vulnerabilities.
+
+  - type: dropdown
+    id: component
+    attributes:
+      label: Component
+      options:
+        - Server / API
+        - Customer app
+        - Driver app
+        - Admin dashboard
+        - Shared package
+        - Database / migrations
+        - Redis / real-time / dispatch
+        - CI / tooling
+        - Documentation
+        - Other
+    validations:
+      required: true
+
+  - type: input
+    id: version
+    attributes:
+      label: Commit or version
+      description: Commit SHA, branch, or release where you observed the problem.
+      placeholder: e.g. main @ abc1234
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: What happened?
+      description: Describe the observed behavior.
+    validations:
+      required: true
+
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Steps to reproduce
+      description: Provide the smallest reliable reproduction.
+      placeholder: |
+        1. ...
+        2. ...
+        3. ...
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+    validations:
+      required: true
+
+  - type: textarea
+    id: evidence
+    attributes:
+      label: Logs or evidence
+      description: Paste sanitized logs, screenshots, or test output. Remove secrets and personal data.
+      render: text
+
+  - type: dropdown
+    id: severity
+    attributes:
+      label: Operational impact
+      options:
+        - Low - cosmetic or minor inconvenience
+        - Medium - feature impaired with workaround
+        - High - important workflow broken
+        - Critical - widespread outage or severe data/security impact
+    validations:
+      required: true
+
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Checks
+      options:
+        - label: I searched existing issues for the same problem.
+          required: true
+        - label: I removed secrets, credentials, OTPs, and personal data from this report.
+          required: true

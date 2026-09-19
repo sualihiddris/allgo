@@ -1,0 +1,6 @@
+# Default owner for review routing.
+* @sualihiddris
+
+# Security- and backend-sensitive areas.
+/server/ @sualihiddris
+/.github/ @sualihiddris
