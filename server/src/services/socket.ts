@@ -216,7 +216,7 @@ const inFlightDispatches = new Map<string, Promise<DispatchTripResult>>();
 export async function setupSocketIO(httpServer: HTTPServer): Promise<Server> {
   const io = new Server(httpServer, {
     cors: {
-      origin: env.NODE_ENV === "production" ? ["https://allgo.com"] : "*",
+      origin: env.NODE_ENV === "production" ? env.CORS_ORIGINS : "*",
       credentials: true,
     },
   });

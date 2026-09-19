@@ -1,5 +1,48 @@
 import { z } from "zod";
 
+function isValidCorsOrigin(value: string): boolean {
+  try {
+    const parsed = new URL(value);
+
+    return (
+      (parsed.protocol === "http:" || parsed.protocol === "https:") &&
+      !parsed.username &&
+      !parsed.password &&
+      parsed.pathname === "/" &&
+      !parsed.search &&
+      !parsed.hash
+    );
+  } catch {
+    return false;
+  }
+}
+
+const corsOriginSchema = z
+  .string()
+  .trim()
+  .refine(isValidCorsOrigin, {
+    message:
+      "CORS origins must be HTTP(S) origins without credentials, paths, query strings, or fragments",
+  })
+  .transform((value) => new URL(value).origin);
+
+const corsOriginsSchema = z
+  .string()
+  .trim()
+  .optional()
+  .default("")
+  .transform((value) =>
+    value
+      .split(",")
+      .map((origin) => origin.trim())
+      .filter(Boolean)
+  )
+  .pipe(
+    z
+      .array(corsOriginSchema)
+      .transform((origins) => [...new Set(origins)])
+  );
+
 export const envSchema = z.object({
   NODE_ENV: z.enum(["development", "production", "test"]).default("development"),
 
@@ -17,6 +60,10 @@ export const envSchema = z.object({
   // Production requires a real shared Redis instance because OTP issuance,
   // dispatch coordination, and Socket.IO cross-instance behavior depend on it.
   REDIS_URL: z.string().trim().optional().default(""),
+
+  // Browser origins allowed to call the API / Socket.IO in production.
+  // Development and tests remain permissive for local tooling.
+  CORS_ORIGINS: corsOriginsSchema,
   
   // JWT
     JWT_SECRET: z.string().min(16),
@@ -40,6 +87,14 @@ export const envSchema = z.object({
       code: z.ZodIssueCode.custom,
       path: ["REDIS_URL"],
       message: "REDIS_URL is required in production",
+    });
+  }
+
+  if (values.NODE_ENV === "production" && values.CORS_ORIGINS.length === 0) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["CORS_ORIGINS"],
+      message: "CORS_ORIGINS is required in production",
     });
   }
 });
