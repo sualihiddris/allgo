@@ -7,21 +7,16 @@ updates:
       day: monday
       time: "08:00"
       timezone: "Etc/UTC"
-    open-pull-requests-limit: 3
+    open-pull-requests-limit: 5
     rebase-strategy: auto
     allow:
-      - dependency-name: "*"
+      - dependency-type: production
+        update-types:
+          - "version-update:semver-patch"
+      - dependency-type: development
         update-types:
           - "version-update:semver-minor"
           - "version-update:semver-patch"
-    groups:
-      npm-minor-and-patch:
-        applies-to: version-updates
-        patterns:
-          - "*"
-        update-types:
-          - "minor"
-          - "patch"
     commit-message:
       prefix: deps
 
