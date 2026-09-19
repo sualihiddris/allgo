@@ -1,10 +1,14 @@
 # AllGo
 
+[![AllGo CI](https://github.com/sualihiddris/allgo/actions/workflows/ci.yml/badge.svg)](https://github.com/sualihiddris/allgo/actions/workflows/ci.yml)
+
 **Trusted Rides. Reliable Delivery. Built for communities often left out of mainstream mobility platforms.**
 
 AllGo is a mobility and delivery platform designed for smaller cities, towns, and underserved communities where conventional ride-hailing services may have limited coverage.
 
 The platform supports motorcycles, tricycles, delivery services, and assisted trip creation for customers who may not use smartphones.
+
+> **Project status:** Active development. Interfaces, workflows, and operational assumptions may change while the platform is hardened for real-world deployment.
 
 ## Why AllGo?
 
@@ -63,3 +67,35 @@ allgo/
 ├── shared/             # Shared types, constants and utilities
 ├── scripts/            # Development and project utilities
 └── docs/               # Project documentation
+```
+
+## Development
+
+Requirements:
+
+- Node.js 18 or newer
+- npm 10
+
+Install workspace dependencies:
+
+```bash
+npm ci
+```
+
+Common validation commands:
+
+```bash
+npm run typecheck
+npm --workspace @allgo/server test
+npm --workspace @allgo/server run build
+```
+
+See [TESTING.md](TESTING.md) for the testing strategy and environment-specific validation.
+
+## Contributing
+
+Contributions should be focused, tested, and submitted through pull requests. See [CONTRIBUTING.md](CONTRIBUTING.md) for branch naming, validation expectations, and review guidance.
+
+## Security
+
+Do not disclose exploitable vulnerabilities in public issues. See [SECURITY.md](SECURITY.md) for responsible disclosure guidance.
