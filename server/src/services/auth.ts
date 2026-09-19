@@ -1,4 +1,10 @@
+import { randomUUID } from "node:crypto";
 import { prisma, redis } from "../config";
+import {
+  compareAndDelete,
+  compareAndExpire,
+  setIfAbsent,
+} from "../config/redis";
 import { generateOtp, generateReferralCode, normalizeGhanaPhone } from "../utils";
 import { sendOtpSms } from "./sms";
 import { generateTokens, verifyToken, generatePendingTotpToken, TokenPair } from "./jwt";
@@ -7,6 +13,10 @@ import { createError } from "../middleware";
 const OTP_EXPIRY_MINUTES = 10;
 const OTP_MAX_ATTEMPTS = 3;
 const RATE_LIMIT_KEY = "otp:rate:";
+const OTP_ISSUANCE_LOCK_PREFIX = "otp:issue-lock:";
+// SMS network time is bounded to 15s in sms.ts; 60s leaves margin for
+// Redis/MySQL work while still self-recovering promptly after a crash.
+const OTP_ISSUANCE_LOCK_TTL_SECONDS = 60;
 
 export interface OtpRequestResult {
   success: boolean;
@@ -39,53 +49,212 @@ export async function requestOtp(phone: string): Promise<OtpRequestResult> {
     throw createError("Invalid Ghana phone number", 400, "INVALID_PHONE");
   }
 
-  // Check rate limit
-  const rateLimitKey = `${RATE_LIMIT_KEY}${normalizedPhone}`;
-  const attempts = await redis.incr(rateLimitKey);
-  
-  if (attempts === 1) {
-    await redis.expire(rateLimitKey, 3600); // 1 hour window
-  }
-  
-  if (attempts > 5) {
+  // Serialize OTP issuance per phone across backend instances.
+  //
+  // Without this fence, two callers can both invalidate the previous OTP
+  // and then both create a new active row.
+  //
+  // The random owner token plus compare-and-delete release also prevents a
+  // stale request from deleting a newer owner's lock after this lock's TTL
+  // has expired.
+  const issuanceLockKey =
+    `${OTP_ISSUANCE_LOCK_PREFIX}${normalizedPhone}`;
+  const issuanceLockToken = randomUUID();
+
+  const acquiredIssuanceLock = await setIfAbsent(
+    issuanceLockKey,
+    issuanceLockToken,
+    OTP_ISSUANCE_LOCK_TTL_SECONDS
+  );
+
+  if (!acquiredIssuanceLock) {
     throw createError(
-      "Too many OTP requests. Please try again later.",
+      "An OTP request is already being processed. Please try again.",
       429,
-      "OTP_RATE_LIMIT"
+      "OTP_REQUEST_IN_PROGRESS"
     );
   }
 
-  // Generate OTP
-  const code = generateOtp(6);
-  const expiresAt = new Date(Date.now() + OTP_EXPIRY_MINUTES * 60 * 1000);
+  try {
+    // Only the lock owner consumes rate-limit quota.
+    //
+    // A concurrent loser cannot create/send an OTP, so it must not burn
+    // another rate-limit slot either.
+    const rateLimitKey = `${RATE_LIMIT_KEY}${normalizedPhone}`;
+    const attempts = await redis.incr(rateLimitKey);
 
-  // Invalidate any existing OTPs for this phone
-  await prisma.otpCode.updateMany({
-    where: { phone: normalizedPhone, usedAt: null },
-    data: { usedAt: new Date() },
-  });
+    if (attempts === 1) {
+      await redis.expire(rateLimitKey, 3600);
+    }
 
-  // Store new OTP
-  await prisma.otpCode.create({
-    data: {
+    if (attempts > 5) {
+      throw createError(
+        "Too many OTP requests. Please try again later.",
+        429,
+        "OTP_RATE_LIMIT"
+      );
+    }
+
+    // Generate OTP
+    const code = generateOtp(6);
+
+    const expiresAt = new Date(
+      Date.now() + OTP_EXPIRY_MINUTES * 60 * 1000
+    );
+
+    // Invalidate previous active OTPs while still holding the
+    // cross-instance issuance lock.
+    await prisma.otpCode.updateMany({
+      where: {
+        phone: normalizedPhone,
+        usedAt: null,
+      },
+      data: {
+        usedAt: new Date(),
+        activeKey: null,
+      },
+    });
+
+    // Create exactly one replacement OTP for this critical section.
+    //
+    // activeKey is the database backstop: even if a Redis lease ever expires
+    // at an awkward moment, MySQL cannot hold two non-null ownership keys for
+    // the same phone.
+    let createdOtpId: string | undefined;
+
+    try {
+      const createdOtp = await prisma.otpCode.create({
+        data: {
+          phone: normalizedPhone,
+          activeKey: normalizedPhone,
+          code,
+          expiresAt,
+        },
+      });
+
+      createdOtpId = createdOtp.id;
+    } catch (error) {
+      // P2002 here can only represent the activeKey uniqueness backstop
+      // winning a race. Surface the same retryable contract as a Redis-lock
+      // loser rather than leaking an internal database error.
+      if (
+        typeof error === "object" &&
+        error !== null &&
+        "code" in error &&
+        (error as { code?: string }).code === "P2002"
+      ) {
+        throw createError(
+          "An OTP request is already being processed. Please try again.",
+          429,
+          "OTP_REQUEST_IN_PROGRESS"
+        );
+      }
+
+      throw error;
+    }
+
+    if (!createdOtpId) {
+      throw new Error("Failed to create OTP");
+    }
+
+    // Database work may have taken long enough for the original Redis lease
+    // to expire. Re-prove and renew ownership immediately before SMS.
+    //
+    // If another backend has acquired the phone lock meanwhile, this stale
+    // request must never send the code it created.
+    let renewedLease: boolean;
+
+    try {
+      renewedLease = await compareAndExpire(
+        issuanceLockKey,
+        issuanceLockToken,
+        OTP_ISSUANCE_LOCK_TTL_SECONDS
+      );
+    } catch (renewError) {
+      // Fail closed: make this code unusable before surfacing the temporary
+      // infrastructure failure.
+      await prisma.otpCode.updateMany({
+        where: {
+          id: createdOtpId,
+          usedAt: null,
+          activeKey: normalizedPhone,
+        },
+        data: {
+          usedAt: new Date(),
+          activeKey: null,
+        },
+      });
+
+      throw createError(
+        "OTP service temporarily unavailable. Please try again.",
+        503,
+        "OTP_SERVICE_UNAVAILABLE"
+      );
+    }
+
+    if (!renewedLease) {
+      // We lost ownership before delivery. Invalidate our exact row if it is
+      // still active and do not send a stale code.
+      await prisma.otpCode.updateMany({
+        where: {
+          id: createdOtpId,
+          usedAt: null,
+          activeKey: normalizedPhone,
+        },
+        data: {
+          usedAt: new Date(),
+          activeKey: null,
+        },
+      });
+
+      throw createError(
+        "An OTP request is already being processed. Please try again.",
+        429,
+        "OTP_REQUEST_IN_PROGRESS"
+      );
+    }
+
+    // Keep the renewed issuance lease through SMS delivery.
+    //
+    // Releasing before SMS completes would allow another request to acquire
+    // the lock and invalidate this newly-created code before the user has
+    // even received it.
+    const smsResult = await sendOtpSms(
+      normalizedPhone,
+      code
+    );
+
+    if (!smsResult.success) {
+      throw createError(
+        "Failed to send OTP. Please try again.",
+        500,
+        "SMS_FAILED"
+      );
+    }
+
+    return {
+      success: true,
       phone: normalizedPhone,
-      code,
       expiresAt,
-    },
-  });
-
-  // Send SMS
-  const smsResult = await sendOtpSms(normalizedPhone, code);
-  if (!smsResult.success) {
-    throw createError("Failed to send OTP. Please try again.", 500, "SMS_FAILED");
+      message: "OTP sent successfully",
+    };
+  } finally {
+    // Release only if this request still owns the lock.
+    //
+    // Failure to release must not convert an already-successful OTP send
+    // into an API failure. The TTL remains the crash/recovery safety net.
+    try {
+      await compareAndDelete(
+        issuanceLockKey,
+        issuanceLockToken
+      );
+    } catch (releaseError) {
+      console.error(
+        "[Auth] Failed to release OTP issuance lock:",
+        releaseError
+      );
+    }
   }
-
-  return {
-    success: true,
-    phone: normalizedPhone,
-    expiresAt,
-    message: "OTP sent successfully",
-  };
 }
 
 /**
@@ -151,6 +320,7 @@ async function recordWrongOtpAttempt(existingOtpId: string): Promise<void> {
     },
     data: {
       usedAt: new Date(),
+      activeKey: null,
     },
   });
 
@@ -197,6 +367,9 @@ export async function verifyOtp(
         usedAt: null,
         expiresAt: { gt: new Date() },
       },
+      // Defense-in-depth for any duplicate active rows created before the
+      // issuance guard existed: wrong attempts target the newest code.
+      orderBy: { createdAt: "desc" },
     });
 
     if (existingOtp) {
@@ -215,7 +388,10 @@ export async function verifyOtp(
       usedAt: null,
       expiresAt: { gt: consumeNow },
     },
-    data: { usedAt: consumeNow },
+    data: {
+      usedAt: consumeNow,
+      activeKey: null,
+    },
   });
 
   if (consumed.count !== 1) {

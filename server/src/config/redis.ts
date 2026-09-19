@@ -15,6 +15,15 @@ end
 return 0
 `;
 
+// Atomic compare-and-expire:
+// renew the lease only while the caller still owns the key.
+const COMPARE_AND_EXPIRE_SCRIPT = `
+if redis.call("GET", KEYS[1]) == ARGV[1] then
+  return redis.call("EXPIRE", KEYS[1], ARGV[2])
+end
+return 0
+`;
+
 // In-memory store for development without Redis
 class MemoryStore {
   private store = new Map<string, { value: string; expiry?: number }>();
@@ -37,6 +46,35 @@ class MemoryStore {
 
   async setex(key: string, seconds: number, value: string): Promise<"OK"> {
     return this.set(key, value, "EX", seconds);
+  }
+
+  /**
+   * Atomically set a key only when it does not already exist.
+   * Expired entries are treated as absent.
+   *
+   * The check and write contain no await point, mirroring Redis SET NX.
+   */
+  async setIfAbsent(
+    key: string,
+    value: string,
+    ttlSeconds: number
+  ): Promise<boolean> {
+    const existing = this.store.get(key);
+
+    if (existing) {
+      if (!existing.expiry || Date.now() <= existing.expiry) {
+        return false;
+      }
+
+      this.store.delete(key);
+    }
+
+    this.store.set(key, {
+      value,
+      expiry: Date.now() + ttlSeconds * 1000,
+    });
+
+    return true;
   }
 
   async del(key: string): Promise<number> {
@@ -138,6 +176,31 @@ class MemoryStore {
   }
 
   /**
+   * Atomically renew a lease only while this caller still owns it.
+   * Honors expiration and performs the compare-and-expire with no await
+   * point in between.
+   */
+  async compareAndExpire(
+    key: string,
+    expected: string,
+    ttlSeconds: number
+  ): Promise<boolean> {
+    const item = this.store.get(key);
+
+    if (!item) return false;
+
+    if (item.expiry && Date.now() > item.expiry) {
+      this.store.delete(key);
+      return false;
+    }
+
+    if (item.value !== expected) return false;
+
+    item.expiry = Date.now() + ttlSeconds * 1000;
+    return true;
+  }
+
+  /**
    * Atomic compare-and-delete against the Map.
    * Honors expiration equivalently to the Lua path and performs the
    * compare and delete with no await point in between.
@@ -194,6 +257,63 @@ if (!useMemoryStore) {
   (redis as Redis).on("connect", () => {
     console.log("✅ Redis connected");
   });
+}
+
+/**
+ * Atomically set `key` to `value` only when the key does not already exist.
+ * The key receives a TTL so abandoned ownership self-recovers.
+ *
+ * MemoryStore performs the existence check and write synchronously with no
+ * await point. Real Redis uses SET key value EX ttl NX.
+ */
+export async function setIfAbsent(
+  key: string,
+  value: string,
+  ttlSeconds: number
+): Promise<boolean> {
+  if (useMemoryStore) {
+    return (redis as MemoryStore).setIfAbsent(key, value, ttlSeconds);
+  }
+
+  const result = await (redis as Redis).set(
+    key,
+    value,
+    "EX",
+    ttlSeconds,
+    "NX"
+  );
+
+  return result === "OK";
+}
+
+/**
+ * Atomically renew the TTL only when `key` is still owned by `expected`.
+ *
+ * This closes the stale-owner window for operations whose initial lease
+ * could expire while database work is still in progress.
+ */
+export async function compareAndExpire(
+  key: string,
+  expected: string,
+  ttlSeconds: number
+): Promise<boolean> {
+  if (useMemoryStore) {
+    return (redis as MemoryStore).compareAndExpire(
+      key,
+      expected,
+      ttlSeconds
+    );
+  }
+
+  const result = await (redis as Redis).eval(
+    COMPARE_AND_EXPIRE_SCRIPT,
+    1,
+    key,
+    expected,
+    ttlSeconds.toString()
+  );
+
+  return Number(result) === 1;
 }
 
 /**

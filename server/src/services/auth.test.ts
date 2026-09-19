@@ -26,6 +26,9 @@ const mocks = vi.hoisted(() => ({
   normalizeGhanaPhone: vi.fn(),
   generateOtp: vi.fn(),
   generateReferralCode: vi.fn(),
+  setIfAbsent: vi.fn(),
+  compareAndExpire: vi.fn(),
+  compareAndDelete: vi.fn(),
 }));
 
 vi.mock("../config", () => ({
@@ -52,6 +55,12 @@ vi.mock("../config", () => ({
   },
 }));
 
+vi.mock("../config/redis", () => ({
+  setIfAbsent: mocks.setIfAbsent,
+  compareAndExpire: mocks.compareAndExpire,
+  compareAndDelete: mocks.compareAndDelete,
+}));
+
 vi.mock("./sms", () => ({
   sendOtpSms: mocks.sendOtpSms,
 }));
@@ -71,7 +80,7 @@ vi.mock("../utils", () => ({
 // createError is a pure error factory; use the real implementation so the
 // tests assert on the genuine error codes/messages produced in production.
 
-import { verifyOtp } from "./auth";
+import { requestOtp, verifyOtp } from "./auth";
 
 const PHONE = "0244123456";
 const NORMALIZED = "+233244123456";
@@ -132,14 +141,24 @@ function matchesWhere(row: OtpRow, where: any): boolean {
  * production fence depends on.
  */
 function installStatefulOtpRow(row: OtpRow, codeLookupMiss = false) {
-  mocks.otpFindFirst.mockImplementation(async ({ where, orderBy }: any) => {
-    // Exact-code lookup (first findFirst in verifyOtp carries orderBy).
-    if (orderBy) {
-      if (!codeLookupMiss && matchesWhere(row, where)) return { ...row };
+  mocks.otpFindFirst.mockImplementation(async ({ where }: any) => {
+    // Exact-code lookup is identified by its code predicate.
+    //
+    // The wrong-attempt active-OTP lookup now also carries orderBy, so
+    // orderBy itself can no longer distinguish the two query paths.
+    if (where.code !== undefined) {
+      if (!codeLookupMiss && matchesWhere(row, where)) {
+        return { ...row };
+      }
+
       return null;
     }
+
     // Active-OTP lookup for wrong-attempt accounting.
-    if (matchesWhere(row, where)) return { ...row };
+    if (matchesWhere(row, where)) {
+      return { ...row };
+    }
+
     return null;
   });
 
@@ -178,6 +197,15 @@ function expectMaxAttemptsError(error: any) {
   expect(error.message).toBe("Too many attempts. Please request a new code.");
 }
 
+function expectOtpRequestInProgress(error: any) {
+  expect(error).toBeTruthy();
+  expect(error.statusCode ?? error.status).toBe(429);
+  expect(error.code).toBe("OTP_REQUEST_IN_PROGRESS");
+  expect(error.message).toBe(
+    "An OTP request is already being processed. Please try again."
+  );
+}
+
 async function wrongAttempt(): Promise<any> {
   try {
     await verifyOtp(PHONE, WRONG_CODE);
@@ -198,10 +226,353 @@ beforeEach(() => {
   });
   mocks.generatePendingTotpToken.mockReturnValue("pending-token");
   mocks.redisDel.mockResolvedValue(1);
-  mocks.refreshTokenCreate.mockResolvedValue({ id: "rt-1" });
+  mocks.redisIncr.mockResolvedValue(1);
+  mocks.redisExpire.mockResolvedValue(1);
+
+  mocks.generateOtp.mockReturnValue(RIGHT_CODE);
+
+  mocks.otpUpdateMany.mockResolvedValue({
+    count: 0,
+  });
+
+  mocks.otpCreate.mockResolvedValue({
+    id: "otp-new",
+  });
+
+  mocks.sendOtpSms.mockResolvedValue({
+    success: true,
+  });
+
+  mocks.setIfAbsent.mockResolvedValue(true);
+  mocks.compareAndExpire.mockResolvedValue(true);
+  mocks.compareAndDelete.mockResolvedValue(true);
+
+  mocks.refreshTokenCreate.mockResolvedValue({
+    id: "rt-1",
+  });
 });
 afterEach(() => {
   vi.useRealTimers();
+});
+
+describe("requestOtp cross-instance issuance guard", () => {
+  it("rejects a concurrent loser before rate limit, database writes, or SMS", async () => {
+    mocks.setIfAbsent.mockResolvedValue(false);
+
+    let error: any;
+
+    try {
+      await requestOtp(PHONE);
+    } catch (caught) {
+      error = caught;
+    }
+
+    expectOtpRequestInProgress(error);
+
+    expect(mocks.setIfAbsent).toHaveBeenCalledTimes(1);
+
+    expect(mocks.setIfAbsent).toHaveBeenCalledWith(
+      `otp:issue-lock:${NORMALIZED}`,
+      expect.any(String),
+      60
+    );
+
+    expect(mocks.redisIncr).not.toHaveBeenCalled();
+    expect(mocks.redisExpire).not.toHaveBeenCalled();
+    expect(mocks.generateOtp).not.toHaveBeenCalled();
+    expect(mocks.otpUpdateMany).not.toHaveBeenCalled();
+    expect(mocks.otpCreate).not.toHaveBeenCalled();
+    expect(mocks.sendOtpSms).not.toHaveBeenCalled();
+
+    // A request that never acquired ownership must never attempt release.
+    expect(mocks.compareAndExpire).not.toHaveBeenCalled();
+    expect(mocks.compareAndDelete).not.toHaveBeenCalled();
+  });
+
+  it("holds the per-phone lock through SMS and releases the same owner token", async () => {
+    const result = await requestOtp(PHONE);
+
+    expect(result).toEqual({
+      success: true,
+      phone: NORMALIZED,
+      expiresAt: expect.any(Date),
+      message: "OTP sent successfully",
+    });
+
+    expect(mocks.setIfAbsent).toHaveBeenCalledTimes(1);
+
+    const [lockKey, lockToken, ttlSeconds] =
+      mocks.setIfAbsent.mock.calls[0];
+
+    expect(lockKey).toBe(
+      `otp:issue-lock:${NORMALIZED}`
+    );
+
+    expect(lockToken).toEqual(expect.any(String));
+    expect(lockToken.length).toBeGreaterThan(0);
+    expect(ttlSeconds).toBe(60);
+
+    expect(mocks.redisIncr).toHaveBeenCalledTimes(1);
+
+    expect(mocks.redisExpire).toHaveBeenCalledWith(
+      `otp:rate:${NORMALIZED}`,
+      3600
+    );
+
+    expect(mocks.generateOtp).toHaveBeenCalledWith(6);
+
+    expect(mocks.otpUpdateMany).toHaveBeenCalledWith({
+      where: {
+        phone: NORMALIZED,
+        usedAt: null,
+      },
+      data: {
+        usedAt: expect.any(Date),
+        activeKey: null,
+      },
+    });
+
+    expect(mocks.otpCreate).toHaveBeenCalledWith({
+      data: {
+        phone: NORMALIZED,
+        activeKey: NORMALIZED,
+        code: RIGHT_CODE,
+        expiresAt: expect.any(Date),
+      },
+    });
+
+    expect(mocks.compareAndExpire).toHaveBeenCalledTimes(1);
+    expect(mocks.compareAndExpire).toHaveBeenCalledWith(
+      lockKey,
+      lockToken,
+      60
+    );
+
+    expect(
+      mocks.compareAndExpire.mock.invocationCallOrder[0]
+    ).toBeLessThan(
+      mocks.sendOtpSms.mock.invocationCallOrder[0]
+    );
+
+    expect(mocks.sendOtpSms).toHaveBeenCalledWith(
+      NORMALIZED,
+      RIGHT_CODE
+    );
+
+    expect(mocks.compareAndDelete).toHaveBeenCalledTimes(1);
+
+    expect(mocks.compareAndDelete).toHaveBeenCalledWith(
+      lockKey,
+      lockToken
+    );
+
+    expect(
+      mocks.setIfAbsent.mock.invocationCallOrder[0]
+    ).toBeLessThan(
+      mocks.redisIncr.mock.invocationCallOrder[0]
+    );
+
+    expect(
+      mocks.sendOtpSms.mock.invocationCallOrder[0]
+    ).toBeLessThan(
+      mocks.compareAndDelete.mock.invocationCallOrder[0]
+    );
+  });
+
+  it("allows exactly one of two concurrent requests to issue and send an OTP", async () => {
+    let currentOwner: string | null = null;
+
+    mocks.setIfAbsent.mockImplementation(
+      async (_key: string, ownerToken: string) => {
+        if (currentOwner !== null) {
+          return false;
+        }
+
+        currentOwner = ownerToken;
+        return true;
+      }
+    );
+
+    mocks.compareAndDelete.mockImplementation(
+      async (_key: string, ownerToken: string) => {
+        if (currentOwner !== ownerToken) {
+          return false;
+        }
+
+        currentOwner = null;
+        return true;
+      }
+    );
+
+    const results = await Promise.allSettled([
+      requestOtp(PHONE),
+      requestOtp(PHONE),
+    ]);
+
+    const fulfilled = results.filter(
+      (result) => result.status === "fulfilled"
+    );
+
+    const rejected = results.filter(
+      (result) => result.status === "rejected"
+    );
+
+    expect(fulfilled).toHaveLength(1);
+    expect(rejected).toHaveLength(1);
+
+    if (rejected[0].status === "rejected") {
+      expectOtpRequestInProgress(
+        rejected[0].reason
+      );
+    }
+
+    expect(mocks.setIfAbsent).toHaveBeenCalledTimes(2);
+
+    // Only the lock winner can consume quota or produce issuance
+    // side effects.
+    expect(mocks.redisIncr).toHaveBeenCalledTimes(1);
+    expect(mocks.generateOtp).toHaveBeenCalledTimes(1);
+    expect(mocks.otpUpdateMany).toHaveBeenCalledTimes(1);
+    expect(mocks.otpCreate).toHaveBeenCalledTimes(1);
+    expect(mocks.sendOtpSms).toHaveBeenCalledTimes(1);
+    expect(mocks.compareAndDelete).toHaveBeenCalledTimes(1);
+
+    expect(currentOwner).toBeNull();
+  });
+
+  it("never sends the created OTP when lease ownership is lost before SMS", async () => {
+    mocks.compareAndExpire.mockResolvedValue(false);
+
+    let error: any;
+
+    try {
+      await requestOtp(PHONE);
+    } catch (caught) {
+      error = caught;
+    }
+
+    expectOtpRequestInProgress(error);
+
+    expect(mocks.otpCreate).toHaveBeenCalledTimes(1);
+    expect(mocks.compareAndExpire).toHaveBeenCalledTimes(1);
+
+    // First updateMany invalidates the previous OTP; the second abandons
+    // this request's exact newly-created row.
+    expect(mocks.otpUpdateMany).toHaveBeenCalledTimes(2);
+
+    expect(mocks.otpUpdateMany).toHaveBeenNthCalledWith(
+      2,
+      {
+        where: {
+          id: "otp-new",
+          usedAt: null,
+          activeKey: NORMALIZED,
+        },
+        data: {
+          usedAt: expect.any(Date),
+          activeKey: null,
+        },
+      }
+    );
+
+    expect(mocks.sendOtpSms).not.toHaveBeenCalled();
+
+    // finally still performs owner-checked cleanup, which cannot delete a
+    // newer owner's lock.
+    expect(mocks.compareAndDelete).toHaveBeenCalledTimes(1);
+  });
+
+  it("maps the database active-OTP uniqueness backstop to the retryable in-progress error", async () => {
+    mocks.otpCreate.mockRejectedValue({
+      code: "P2002",
+    });
+
+    let error: any;
+
+    try {
+      await requestOtp(PHONE);
+    } catch (caught) {
+      error = caught;
+    }
+
+    expectOtpRequestInProgress(error);
+
+    expect(mocks.otpUpdateMany).toHaveBeenCalledTimes(1);
+    expect(mocks.otpCreate).toHaveBeenCalledTimes(1);
+
+    // The database fence failed before delivery, so no unusable code is sent.
+    expect(mocks.sendOtpSms).not.toHaveBeenCalled();
+
+    // The Redis lease is still owner-released in finally.
+    expect(mocks.compareAndDelete).toHaveBeenCalledTimes(1);
+  });
+
+  it("releases ownership even when SMS delivery fails", async () => {
+    mocks.sendOtpSms.mockResolvedValue({
+      success: false,
+    });
+
+    let error: any;
+
+    try {
+      await requestOtp(PHONE);
+    } catch (caught) {
+      error = caught;
+    }
+
+    expect(error).toBeTruthy();
+    expect(error.statusCode ?? error.status).toBe(500);
+    expect(error.code).toBe("SMS_FAILED");
+
+    expect(mocks.compareAndDelete).toHaveBeenCalledTimes(1);
+
+    const [, lockToken] =
+      mocks.setIfAbsent.mock.calls[0];
+
+    expect(mocks.compareAndDelete).toHaveBeenCalledWith(
+      `otp:issue-lock:${NORMALIZED}`,
+      lockToken
+    );
+  });
+
+  it("does not turn successful OTP delivery into failure when unlock fails", async () => {
+    const releaseError = new Error(
+      "redis release unavailable"
+    );
+
+    mocks.compareAndDelete.mockRejectedValue(
+      releaseError
+    );
+
+    const errorSpy = vi
+      .spyOn(console, "error")
+      .mockImplementation(() => {});
+
+    try {
+      await expect(
+        requestOtp(PHONE)
+      ).resolves.toMatchObject({
+        success: true,
+        phone: NORMALIZED,
+        message: "OTP sent successfully",
+      });
+
+      expect(
+        mocks.sendOtpSms
+      ).toHaveBeenCalledTimes(1);
+
+      expect(
+        mocks.compareAndDelete
+      ).toHaveBeenCalledTimes(1);
+
+      expect(errorSpy).toHaveBeenCalledWith(
+        "[Auth] Failed to release OTP issuance lock:",
+        releaseError
+      );
+    } finally {
+      errorSpy.mockRestore();
+    }
+  });
 });
 
 describe("verifyOtp OTP concurrency guards (atomic)", () => {
@@ -212,6 +583,14 @@ describe("verifyOtp OTP concurrency guards (atomic)", () => {
 
     expectInvalidOtp(error);
     expect(mocks.otpUpdateMany).toHaveBeenCalledTimes(1);
+
+    // Even if legacy duplicate active rows exist, wrong-attempt accounting
+    // deterministically selects the newest active OTP.
+    expect(
+      mocks.otpFindFirst.mock.calls[1][0].orderBy
+    ).toEqual({
+      createdAt: "desc",
+    });
 
     const call = mocks.otpUpdateMany.mock.calls[0][0];
     // Guarded predicate: same OTP, still active, below terminal slot.
@@ -337,9 +716,10 @@ describe("verifyOtp OTP concurrency guards (atomic)", () => {
     // already held existingOtp.id when it lost the race.
     let activeLookupDone = false;
 
-    mocks.otpFindFirst.mockImplementation(async ({ where, orderBy }: any) => {
+    mocks.otpFindFirst.mockImplementation(async ({ where }: any) => {
       // Exact-code lookup: misses (wrong code submitted).
-      if (orderBy) return null;
+      if (where.code !== undefined) return null;
+
       // Active-OTP lookup: succeeds, returning a snapshot of the row.
       if (matchesWhere(row, where)) {
         const snapshot = { ...row };
@@ -396,8 +776,9 @@ describe("verifyOtp OTP concurrency guards (atomic)", () => {
     const expiresAt = new Date("2026-08-19T12:00:05.000Z"); // +5s
     const row = makeOtpRow({ attempts: MAX_ATTEMPTS - 1, expiresAt });
 
-    mocks.otpFindFirst.mockImplementation(async ({ where, orderBy }: any) => {
-      if (orderBy) return null;
+    mocks.otpFindFirst.mockImplementation(async ({ where }: any) => {
+      // Exact-code lookup misses; active-OTP lookup returns the live row.
+      if (where.code !== undefined) return null;
       if (matchesWhere(row, where)) return { ...row };
       return null;
     });
@@ -494,7 +875,10 @@ describe("verifyOtp OTP concurrency guards (atomic)", () => {
       usedAt: null,
       expiresAt: { gt: expect.any(Date) },
     });
-    expect(consumeCall.data).toEqual({ usedAt: expect.any(Date) });
+    expect(consumeCall.data).toEqual({
+      usedAt: expect.any(Date),
+      activeKey: null,
+    });
     expect(consumeCall.where.attempts).toBeUndefined();
     expect(consumeCall.data.attempts).toBeUndefined();
     expect(mocks.otpUpdate).not.toHaveBeenCalled();
