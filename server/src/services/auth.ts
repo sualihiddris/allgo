@@ -206,11 +206,21 @@ export async function verifyOtp(
     throw createError("Invalid or expired OTP", 400, "INVALID_OTP");
   }
 
-  // Mark OTP as used
-  await prisma.otpCode.update({
-    where: { id: otp.id },
-    data: { usedAt: new Date() },
+  // Atomically consume the exact OTP before any downstream authentication
+  // side effects. The fresh expiry fence closes the lookup->consume window.
+  const consumeNow = new Date();
+  const consumed = await prisma.otpCode.updateMany({
+    where: {
+      id: otp.id,
+      usedAt: null,
+      expiresAt: { gt: consumeNow },
+    },
+    data: { usedAt: consumeNow },
   });
+
+  if (consumed.count !== 1) {
+    throw createError("Invalid or expired OTP", 400, "INVALID_OTP");
+  }
 
   // Find or create user
   let user = await prisma.user.findUnique({
