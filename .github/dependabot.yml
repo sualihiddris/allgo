@@ -7,8 +7,21 @@ updates:
       day: monday
       time: "08:00"
       timezone: "Etc/UTC"
-    open-pull-requests-limit: 5
+    open-pull-requests-limit: 3
     rebase-strategy: auto
+    allow:
+      - dependency-name: "*"
+        update-types:
+          - "version-update:semver-minor"
+          - "version-update:semver-patch"
+    groups:
+      npm-minor-and-patch:
+        applies-to: version-updates
+        patterns:
+          - "*"
+        update-types:
+          - "minor"
+          - "patch"
     commit-message:
       prefix: deps
 
@@ -20,5 +33,18 @@ updates:
       timezone: "Etc/UTC"
     open-pull-requests-limit: 2
     rebase-strategy: auto
+    allow:
+      - dependency-name: "*"
+        update-types:
+          - "version-update:semver-minor"
+          - "version-update:semver-patch"
+    groups:
+      actions-minor-and-patch:
+        applies-to: version-updates
+        patterns:
+          - "*"
+        update-types:
+          - "minor"
+          - "patch"
     commit-message:
       prefix: ci
