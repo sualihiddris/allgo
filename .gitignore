@@ -26,3 +26,6 @@ serviceAccountKey.json
 coverage
 build
 .next
+
+# Firebase Android config
+apps/driver/google-services.json
