@@ -5,6 +5,8 @@ export default ({ config }: ConfigContext): ExpoConfig => ({
 
   android: {
     ...config.android,
+    googleServicesFile:
+      process.env.GOOGLE_SERVICES_JSON ?? "./google-services.json",
     config: {
       ...config.android?.config,
       googleMaps: {
