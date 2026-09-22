@@ -104,6 +104,8 @@ export default function HomeScreen() {
             id: data.tripId,
             vehicleType: offer?.vehicleType || "MOTO",
             serviceType: offer?.serviceType || "PASSENGER",
+            deliveryType: offer?.deliveryType,
+            itemDescription: offer?.itemDescription,
             status: "ACCEPTED",
             pickup: offer?.pickup || { lat: 0, lng: 0, address: "" },
             destination: offer?.destination || { lat: 0, lng: 0, address: "" },
