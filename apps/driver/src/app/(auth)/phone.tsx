@@ -63,7 +63,7 @@ export default function PhoneScreen() {
       behavior={Platform.OS === "ios" ? "padding" : "height"}
     >
       <View style={styles.content}>
-        <Text style={styles.title}>AllGo Rider</Text>
+        <Text style={styles.title}>AllGo Driver</Text>
         <Text style={styles.subtitle}>
           Sign in to start earning
         </Text>
@@ -91,19 +91,20 @@ export default function PhoneScreen() {
           </Text>
         </TouchableOpacity>
 
-        {/* Dev Login Button */}
-        <TouchableOpacity
-          style={[styles.devButton]}
-          onPress={handleDevLogin}
-          disabled={isLoading}
-        >
-          <Text style={styles.devButtonText}>
-            🔧 Dev Login (Skip OTP)
-          </Text>
-        </TouchableOpacity>
+        {__DEV__ && (
+          <TouchableOpacity
+            style={styles.devButton}
+            onPress={handleDevLogin}
+            disabled={isLoading}
+          >
+            <Text style={styles.devButtonText}>
+              Dev Login (Skip OTP)
+            </Text>
+          </TouchableOpacity>
+        )}
 
         <Text style={styles.terms}>
-          By continuing, you agree to our Rider Terms and Privacy Policy
+          By continuing, you agree to our Driver Terms and Privacy Policy
         </Text>
       </View>
     </KeyboardAvoidingView>
