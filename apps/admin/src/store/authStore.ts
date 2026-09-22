@@ -18,6 +18,7 @@ interface AuthState {
   isAuthenticated: boolean;
   isLoading: boolean;
   isInitialized: boolean;
+  initializationError: string | null;
 
   initialize: () => Promise<void>;
   login: (user: AdminUser) => void;
@@ -29,23 +30,53 @@ export const useAuthStore = create<AuthState>((set) => ({
   isAuthenticated: false,
   isLoading: true,
   isInitialized: false,
+  initializationError: null,
 
   initialize: async () => {
     try {
-      set({ isLoading: true });
-      
-      if (adminAuthService.isAuthenticated()) {
-        const user = await adminAuthService.getMe();
-        if (user && user.role === 'ADMIN') {
-          set({ user, isAuthenticated: true });
-        } else {
-          await adminAuthService.logout();
-        }
+      set({
+        isLoading: true,
+        initializationError: null,
+      });
+
+      if (!adminAuthService.isAuthenticated()) {
+        set({
+          user: null,
+          isAuthenticated: false,
+        });
+        return;
       }
+
+      const user = await adminAuthService.getMe();
+
+      if (user && user.role === 'ADMIN') {
+        set({
+          user,
+          isAuthenticated: true,
+          initializationError: null,
+        });
+        return;
+      }
+
+      await adminAuthService.logout();
+      set({
+        user: null,
+        isAuthenticated: false,
+      });
     } catch (error) {
       console.error('Auth init error:', error);
+
+      set({
+        user: null,
+        isAuthenticated: false,
+        initializationError:
+          'Unable to verify your admin session. Check the connection and try again.',
+      });
     } finally {
-      set({ isLoading: false, isInitialized: true });
+      set({
+        isLoading: false,
+        isInitialized: true,
+      });
     }
   },
 
@@ -53,14 +84,23 @@ export const useAuthStore = create<AuthState>((set) => ({
     if (user.role !== 'ADMIN') {
       throw new Error('Admin access required');
     }
-    set({ user, isAuthenticated: true });
+
+    set({
+      user,
+      isAuthenticated: true,
+      initializationError: null,
+    });
   },
 
   logout: async () => {
     try {
       await adminAuthService.logout();
     } finally {
-      set({ user: null, isAuthenticated: false });
+      set({
+        user: null,
+        isAuthenticated: false,
+        initializationError: null,
+      });
     }
   },
 }));
