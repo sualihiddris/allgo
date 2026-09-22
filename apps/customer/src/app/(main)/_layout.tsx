@@ -1,23 +1,7 @@
 import { Tabs } from "expo-router";
-import { View, Text, StyleSheet } from "react-native";
+import { StyleSheet } from "react-native";
 import { CustomerTheme } from "../../constants/config";
 import { useTheme } from "../../hooks/useTheme";
-
-function TabIcon({ name, focused }: { name: string; focused: boolean }) {
-  const theme = useTheme();
-  const styles = createStyles(theme);
-  const icons: Record<string, string> = {
-    home: "🏠",
-    rides: "🛵",
-    profile: "👤",
-  };
-
-  return (
-    <View style={styles.tabIcon}>
-      <Text style={{ fontSize: 20 }}>{icons[name] || "•"}</Text>
-    </View>
-  );
-}
 
 export default function MainLayout() {
   const theme = useTheme();
@@ -31,13 +15,13 @@ export default function MainLayout() {
         tabBarInactiveTintColor: theme.textSecondary,
         tabBarStyle: styles.tabBar,
         tabBarLabelStyle: styles.tabLabel,
+        tabBarHideOnKeyboard: true,
       }}
     >
       <Tabs.Screen
         name="home"
         options={{
           title: "Home",
-          tabBarIcon: ({ focused }: { focused: boolean }) => <TabIcon name="home" focused={focused} />,
         }}
       />
       <Tabs.Screen
@@ -52,7 +36,6 @@ export default function MainLayout() {
         name="rides"
         options={{
           title: "Rides",
-          tabBarIcon: ({ focused }: { focused: boolean }) => <TabIcon name="rides" focused={focused} />,
         }}
       />
       <Tabs.Screen
@@ -71,7 +54,6 @@ export default function MainLayout() {
         name="profile"
         options={{
           title: "Account",
-          tabBarIcon: ({ focused }: { focused: boolean }) => <TabIcon name="profile" focused={focused} />,
         }}
       />
       <Tabs.Screen
@@ -93,15 +75,12 @@ function createStyles(theme: CustomerTheme) {
       borderTopWidth: 1,
       borderTopColor: theme.border,
       paddingTop: 8,
-      height: 60,
+      paddingBottom: 8,
+      height: 64,
     },
     tabLabel: {
-      fontSize: 12,
-      fontWeight: "500",
-    },
-    tabIcon: {
-      alignItems: "center",
-      justifyContent: "center",
+      fontSize: 13,
+      fontWeight: "600",
     },
   });
 }

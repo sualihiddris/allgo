@@ -9,7 +9,7 @@
  * 5. ARRIVED/STARTED/COMPLETED: Show trip progress
  */
 
-import { useEffect, useState, useRef } from "react";
+import { useEffect, useState } from "react";
 import {
   View,
   Text,
@@ -18,7 +18,6 @@ import {
   ActivityIndicator,
   Alert,
   Linking,
-  Animated,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { Redirect, useRouter } from "expo-router";
@@ -47,8 +46,7 @@ export default function TripTrackingScreen() {
   const [tripState, setTripState] = useState<TripState>("SEARCHING");
   const [driver, setDriver] = useState<TripAcceptedData["driver"] | null>(null);
   const [driverLocation, setDriverLocation] = useState<DriverLocation | null>(null);
-  
-  const pulseAnim = useRef(new Animated.Value(1)).current;
+
 
   useEffect(() => {
     if (!currentTrip?.id) {
@@ -82,18 +80,6 @@ export default function TripTrackingScreen() {
       socketService.disconnect();
     };
   }, [currentTrip?.id, isRecoveredRequestedTrip]);
-
-  useEffect(() => {
-    // Pulse animation for searching state
-    if (tripState === "SEARCHING") {
-      Animated.loop(
-        Animated.sequence([
-          Animated.timing(pulseAnim, { toValue: 1.2, duration: 1000, useNativeDriver: true }),
-          Animated.timing(pulseAnim, { toValue: 1, duration: 1000, useNativeDriver: true }),
-        ])
-      ).start();
-    }
-  }, [tripState]);
 
   const initializeTrip = async (): Promise<(() => void) | undefined> => {
     if (!currentTrip?.id) return undefined;
@@ -188,7 +174,7 @@ export default function TripTrackingScreen() {
       if (newState === "COMPLETED" && currentTrip?.id) {
         setTimeout(() => {
           router.replace({
-            pathname: "/feedback",
+            pathname: "/(main)/feedback",
             params: { tripId: currentTrip.id },
           });
         }, 1000);
@@ -198,7 +184,7 @@ export default function TripTrackingScreen() {
       if (newState === "CANCELLED") {
         setTimeout(() => {
           reset();
-          router.replace("/home");
+          router.replace("/(main)/home");
         }, 2000);
       }
     }
@@ -225,7 +211,7 @@ export default function TripTrackingScreen() {
                 await bookingService.cancelTrip(currentTrip.id, "Customer cancelled");
               }
               reset();
-              router.replace("/home");
+              router.replace("/(main)/home");
             } catch (error) {
               console.error("Failed to cancel trip:", error);
               Alert.alert("Error", "Failed to cancel trip");
@@ -250,7 +236,7 @@ export default function TripTrackingScreen() {
     try {
       await bookingService.cancelTrip(currentTrip.id, "No drivers available");
       reset();
-      router.replace("/home");
+      router.replace("/(main)/home");
     } catch (error) {
       console.error("Failed to cancel trip before leaving:", error);
       Alert.alert("Error", "Failed to cancel trip. Please try again.");
@@ -274,12 +260,9 @@ export default function TripTrackingScreen() {
       case "SEARCHING":
         return (
           <View style={styles.centerContent}>
-            <Animated.View style={{ transform: [{ scale: pulseAnim }] }}>
-              <Text style={styles.searchIcon}>🔍</Text>
-            </Animated.View>
-            <Text style={styles.statusTitle}>Searching for drivers...</Text>
+            <Text style={styles.statusTitle}>Finding a nearby driver</Text>
             <Text style={styles.statusDescription}>
-              We are contacting nearby drivers. Please wait.
+              We are contacting nearby drivers. This may take a moment on a slow connection.
             </Text>
             <ActivityIndicator size="large" color={theme.primary} style={styles.loader} />
             <TouchableOpacity style={styles.cancelButton} onPress={handleCancelTrip}>
@@ -291,16 +274,15 @@ export default function TripTrackingScreen() {
       case "NO_DRIVER_FOUND":
         return (
           <View style={styles.centerContent}>
-            <Text style={styles.errorIcon}>😔</Text>
-            <Text style={styles.statusTitle}>No drivers available</Text>
+            <Text style={styles.statusTitle}>No driver accepted this trip</Text>
             <Text style={styles.statusDescription}>
-              No nearby driver accepted your trip. Please try again.
+              Try the search again or cancel this request and return home.
             </Text>
             <TouchableOpacity style={styles.primaryButton} onPress={handleRetrySearch}>
-              <Text style={styles.primaryButtonText}>Try Again</Text>
+              <Text style={styles.primaryButtonText}>Search Again</Text>
             </TouchableOpacity>
             <TouchableOpacity style={styles.secondaryButton} onPress={handleGoHome}>
-              <Text style={styles.secondaryButtonText}>Cancel & Go Home</Text>
+              <Text style={styles.secondaryButtonText}>Cancel Request</Text>
             </TouchableOpacity>
           </View>
         );
@@ -308,16 +290,15 @@ export default function TripTrackingScreen() {
       case "FAILED":
         return (
           <View style={styles.centerContent}>
-            <Text style={styles.errorIcon}>⚠️</Text>
-            <Text style={styles.statusTitle}>We couldn't dispatch your trip</Text>
+            <Text style={styles.statusTitle}>We couldn't contact drivers</Text>
             <Text style={styles.statusDescription}>
-              Something went wrong while contacting drivers. Please try again.
+              Check your connection and try the search again.
             </Text>
             <TouchableOpacity style={styles.primaryButton} onPress={handleRetrySearch}>
-              <Text style={styles.primaryButtonText}>Try Again</Text>
+              <Text style={styles.primaryButtonText}>Search Again</Text>
             </TouchableOpacity>
             <TouchableOpacity style={styles.secondaryButton} onPress={handleGoHome}>
-              <Text style={styles.secondaryButtonText}>Cancel & Go Home</Text>
+              <Text style={styles.secondaryButtonText}>Cancel Request</Text>
             </TouchableOpacity>
           </View>
         );
@@ -340,8 +321,13 @@ export default function TripTrackingScreen() {
                   {driver?.vehicleType} • {driver?.licensePlate}
                 </Text>
               </View>
-              <TouchableOpacity style={styles.callButton} onPress={handleCallDriver}>
-                <Text style={styles.callIcon}>📞</Text>
+              <TouchableOpacity
+                style={styles.callButton}
+                onPress={handleCallDriver}
+                accessibilityRole="button"
+                accessibilityLabel="Call driver"
+              >
+                <Text style={styles.callButtonText}>Call</Text>
               </TouchableOpacity>
             </View>
 
@@ -349,7 +335,6 @@ export default function TripTrackingScreen() {
             <View style={styles.statusCard}>
               {tripState === "ACCEPTED" && (
                 <>
-                  <Text style={styles.statusEmoji}>🚗</Text>
                   <Text style={styles.statusTitle}>Driver is on the way</Text>
                   <Text style={styles.statusDescription}>
                     Your driver is heading to your pickup location
@@ -358,7 +343,6 @@ export default function TripTrackingScreen() {
               )}
               {tripState === "ARRIVED" && (
                 <>
-                  <Text style={styles.statusEmoji}>📍</Text>
                   <Text style={styles.statusTitle}>Driver has arrived</Text>
                   <Text style={styles.statusDescription}>
                     Your driver is waiting at the pickup location
@@ -367,7 +351,6 @@ export default function TripTrackingScreen() {
               )}
               {tripState === "STARTED" && (
                 <>
-                  <Text style={styles.statusEmoji}>🎯</Text>
                   <Text style={styles.statusTitle}>Trip in progress</Text>
                   <Text style={styles.statusDescription}>
                     You're on your way to the destination
@@ -378,13 +361,10 @@ export default function TripTrackingScreen() {
 
             {/* Payment Reminder */}
             <View style={styles.paymentReminder}>
-              <Text style={styles.reminderIcon}>💰</Text>
-              <View style={styles.reminderText}>
-                <Text style={styles.reminderTitle}>Payment after trip</Text>
-                <Text style={styles.reminderDescription}>
-                  Negotiate fare with driver and pay directly (cash or MoMo)
-                </Text>
-              </View>
+              <Text style={styles.reminderTitle}>Payment after trip</Text>
+              <Text style={styles.reminderDescription}>
+                Agree the fare with your driver and pay directly after the trip.
+              </Text>
             </View>
 
             {/* Cancel Trip Button (only if not started) */}
@@ -399,8 +379,7 @@ export default function TripTrackingScreen() {
       case "COMPLETED":
         return (
           <View style={styles.centerContent}>
-            <Text style={styles.successIcon}>✅</Text>
-            <Text style={styles.statusTitle}>Trip Completed!</Text>
+            <Text style={styles.statusTitle}>Trip completed</Text>
             <Text style={styles.statusDescription}>
               Redirecting to feedback...
             </Text>
@@ -410,8 +389,7 @@ export default function TripTrackingScreen() {
       case "CANCELLED":
         return (
           <View style={styles.centerContent}>
-            <Text style={styles.errorIcon}>❌</Text>
-            <Text style={styles.statusTitle}>Trip Cancelled</Text>
+            <Text style={styles.statusTitle}>Trip cancelled</Text>
             <Text style={styles.statusDescription}>
               Returning to home...
             </Text>
@@ -446,22 +424,6 @@ function createStyles(theme: CustomerTheme) {
     flex: 1,
     paddingHorizontal: SPACING.lg,
     paddingVertical: SPACING.xl,
-  },
-  searchIcon: {
-    fontSize: 80,
-    marginBottom: SPACING.lg,
-  },
-  errorIcon: {
-    fontSize: 80,
-    marginBottom: SPACING.lg,
-  },
-  successIcon: {
-    fontSize: 80,
-    marginBottom: SPACING.lg,
-  },
-  statusEmoji: {
-    fontSize: 60,
-    marginBottom: SPACING.md,
   },
   statusTitle: {
     fontSize: 24,
@@ -525,11 +487,6 @@ function createStyles(theme: CustomerTheme) {
     padding: SPACING.lg,
     borderRadius: 16,
     marginBottom: SPACING.lg,
-    shadowColor: theme.deep,
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.1,
-    shadowRadius: 4,
-    elevation: 3,
   },
   driverAvatar: {
     width: 56,
@@ -559,15 +516,17 @@ function createStyles(theme: CustomerTheme) {
     color: theme.textSecondary,
   },
   callButton: {
-    width: 48,
-    height: 48,
-    borderRadius: 24,
+    minHeight: 44,
+    paddingHorizontal: SPACING.md,
+    borderRadius: 10,
     backgroundColor: theme.success,
     justifyContent: "center",
     alignItems: "center",
   },
-  callIcon: {
-    fontSize: 24,
+  callButtonText: {
+    color: theme.textInverse,
+    fontSize: 14,
+    fontWeight: "600",
   },
   statusCard: {
     backgroundColor: theme.surface,
@@ -575,25 +534,12 @@ function createStyles(theme: CustomerTheme) {
     borderRadius: 16,
     alignItems: "center",
     marginBottom: SPACING.lg,
-    shadowColor: theme.deep,
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.1,
-    shadowRadius: 4,
-    elevation: 3,
   },
   paymentReminder: {
-    flexDirection: "row",
     backgroundColor: theme.primaryLight,
     padding: SPACING.md,
     borderRadius: 12,
     marginBottom: SPACING.lg,
-  },
-  reminderIcon: {
-    fontSize: 32,
-    marginRight: SPACING.md,
-  },
-  reminderText: {
-    flex: 1,
   },
   reminderTitle: {
     fontSize: 14,

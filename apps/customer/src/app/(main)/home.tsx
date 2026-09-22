@@ -16,29 +16,22 @@ import {
   StyleSheet,
   TouchableOpacity,
   ScrollView,
-  Dimensions,
-  Modal,
-  Pressable,
-  Switch,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { useRouter } from "expo-router";
-import { useAuthStore, useThemeStore } from "../../store";
+import { useAuthStore } from "../../store";
 import { useBookingStore } from "../../store/bookingStore";
 import { SPACING, CustomerTheme } from "../../constants/config";
-import { useTheme, useIsDarkMode } from "../../hooks/useTheme";
+import { useTheme } from "../../hooks/useTheme";
 import { getCurrentPickupLocation } from "../../services/location";
 import bookingService from "../../services/booking";
 
-const { width: SCREEN_WIDTH } = Dimensions.get("window");
 
 export default function HomeScreen() {
   const router = useRouter();
   const theme = useTheme();
   const styles = createStyles(theme);
-  const isDarkMode = useIsDarkMode();
-  const setAppearanceMode = useThemeStore((s) => s.setMode);
-  const { user, logout } = useAuthStore();
+  const { user } = useAuthStore();
   const {
     pickup,
     destination,
@@ -46,9 +39,7 @@ export default function HomeScreen() {
     setPickup,
     setCurrentTrip,
     setRecoveredRequestedTrip,
-    reset: resetBooking,
   } = useBookingStore();
-  const [menuVisible, setMenuVisible] = useState(false);
   const [pickupLoading, setPickupLoading] = useState(false);
   const [pickupError, setPickupError] = useState<string | null>(null);
   const recoveryAttempted = useRef(false);
@@ -86,6 +77,8 @@ export default function HomeScreen() {
 
   useEffect(() => {
     if (pickup) {
+      setPickupError(null);
+      setPickupLoading(false);
       return;
     }
 
@@ -118,6 +111,10 @@ export default function HomeScreen() {
     };
   }, [pickup, setPickup]);
 
+  const handlePickupPress = () => {
+    router.push({ pathname: "/location-search", params: { type: "pickup" } });
+  };
+
   const handleDestinationPress = () => {
     router.push({ pathname: "/location-search", params: { type: "destination" } });
   };
@@ -128,40 +125,24 @@ export default function HomeScreen() {
     }
   };
 
-  const handleToggleDarkMode = () => {
-    setAppearanceMode(isDarkMode ? "light" : "dark");
-  };
-
-  const handleLogout = async () => {
-    setMenuVisible(false);
-    await logout();
-    router.replace("/");
-  };
 
   return (
     <SafeAreaView style={styles.container} edges={["top"]}>
-      {/* Header with Hamburger Menu */}
       <View style={styles.header}>
-        <TouchableOpacity 
-          style={styles.menuButton} 
-          onPress={() => setMenuVisible(true)}
-        >
-          <View style={styles.menuLine} />
-          <View style={styles.menuLine} />
-          <View style={styles.menuLine} />
-        </TouchableOpacity>
-        
         <Text style={styles.logoText}>
           All<Text style={styles.logoAccent}>Go</Text>
         </Text>
-        
-        <View style={styles.headerRight}>
-          <View style={styles.userAvatar}>
-            <Text style={styles.avatarText}>
-              {user?.name?.[0]?.toUpperCase() || "U"}
-            </Text>
-          </View>
-        </View>
+
+        <TouchableOpacity
+          style={styles.userAvatar}
+          onPress={() => router.push("/profile")}
+          accessibilityRole="button"
+          accessibilityLabel="Open account"
+        >
+          <Text style={styles.avatarText}>
+            {user?.name?.[0]?.toUpperCase() || "U"}
+          </Text>
+        </TouchableOpacity>
       </View>
 
       <ScrollView 
@@ -172,7 +153,7 @@ export default function HomeScreen() {
         {/* Hero Section */}
         <View style={styles.heroSection}>
           <Text style={styles.heroGreeting}>
-            Hello, {user?.name?.split(" ")[0] || "there"} 👋
+            Hello, {user?.name?.split(" ")[0] || "there"}
           </Text>
           <Text style={styles.heroTitle}>
             Where do you want to go?
@@ -184,7 +165,36 @@ export default function HomeScreen() {
 
         {/* Main Booking Card */}
         <View style={styles.bookingCard}>
-          {/* Destination Input */}
+          {/* Pickup */}
+          <TouchableOpacity
+            style={styles.locationRow}
+            onPress={handlePickupPress}
+            activeOpacity={0.7}
+          >
+            <View style={styles.locationDot}>
+              <View style={styles.dotGreen} />
+            </View>
+            <View style={styles.locationContent}>
+              <Text style={styles.locationLabel}>PICKUP</Text>
+              <Text
+                style={pickup ? styles.locationValue : styles.locationPlaceholder}
+                numberOfLines={1}
+              >
+                {pickupLoading
+                  ? "Getting your current location..."
+                  : pickup?.address || "Tap to choose your pickup location"}
+              </Text>
+              {pickupError && (
+                <Text style={styles.locationError}>
+                  {pickupError}
+                </Text>
+              )}
+            </View>
+          </TouchableOpacity>
+
+          <View style={styles.connectorLine} />
+
+          {/* Destination */}
           <TouchableOpacity 
             style={styles.locationRow} 
             onPress={handleDestinationPress}
@@ -211,21 +221,25 @@ export default function HomeScreen() {
               (!pickup || !destination) && styles.bookButtonDisabled,
             ]}
             onPress={handleBookRide}
-            disabled={!pickup || !destination}
+            disabled={pickupLoading || !pickup || !destination}
             activeOpacity={0.8}
           >
             <Text style={styles.bookButtonText}>
-              {pickup && destination ? "Find a Ride" : "Set Locations"}
+              {pickupLoading
+                ? "Getting Location..."
+                : !pickup
+                  ? "Set Pickup"
+                  : !destination
+                    ? "Choose Destination"
+                    : "Find a Ride"}
             </Text>
             <Text style={styles.bookButtonArrow}>→</Text>
           </TouchableOpacity>
         </View>
 
-        {/* Info Banner */}
         <View style={styles.infoBanner}>
-          <Text style={styles.infoIcon}>💡</Text>
           <Text style={styles.infoText}>
-            Negotiate fare directly with your driver. No hidden charges!
+            Agree the fare directly with your driver and pay after the trip.
           </Text>
         </View>
 
@@ -235,98 +249,6 @@ export default function HomeScreen() {
 
 
 
-      {/* Hamburger Menu Modal */}
-      <Modal
-        visible={menuVisible}
-        animationType="slide"
-        transparent={true}
-        onRequestClose={() => setMenuVisible(false)}
-      >
-        <Pressable 
-          style={styles.menuOverlay} 
-          onPress={() => setMenuVisible(false)}
-        >
-          <View style={styles.menuContainer}>
-            {/* Menu Header */}
-            <View style={styles.menuHeader}>
-              <View style={styles.menuUserAvatar}>
-                <Text style={styles.menuAvatarText}>
-                  {user?.name?.[0]?.toUpperCase() || "U"}
-                </Text>
-              </View>
-              <View style={styles.menuUserInfo}>
-                <Text style={styles.menuUserName}>{user?.name || "User"}</Text>
-                <Text style={styles.menuUserPhone}>{user?.phone || ""}</Text>
-              </View>
-              <TouchableOpacity 
-                style={styles.menuCloseBtn}
-                onPress={() => setMenuVisible(false)}
-              >
-                <Text style={styles.menuCloseText}>✕</Text>
-              </TouchableOpacity>
-            </View>
-
-            {/* Menu Items */}
-            <ScrollView style={styles.menuItems}>
-              <TouchableOpacity style={styles.menuItem}>
-                <Text style={styles.menuItemIcon}>🏠</Text>
-                <Text style={styles.menuItemText}>Home</Text>
-              </TouchableOpacity>
-
-
-
-              <TouchableOpacity 
-                style={styles.menuItem}
-                onPress={() => {
-                  setMenuVisible(false);
-                  router.push("/profile");
-                }}
-              >
-                <Text style={styles.menuItemIcon}>👤</Text>
-                <Text style={styles.menuItemText}>Profile</Text>
-              </TouchableOpacity>
-
-              <TouchableOpacity style={styles.menuItem}>
-                <Text style={styles.menuItemIcon}>⭐</Text>
-                <Text style={styles.menuItemText}>Saved Places</Text>
-              </TouchableOpacity>
-
-              <TouchableOpacity style={styles.menuItem}>
-                <Text style={styles.menuItemIcon}>❓</Text>
-                <Text style={styles.menuItemText}>Help & Support</Text>
-              </TouchableOpacity>
-
-              <View style={[styles.menuItem, styles.menuItemRow]}>
-                <View style={styles.menuItemLeft}>
-                  <Text style={styles.menuItemIcon}>{isDarkMode ? "🌙" : "☀️"}</Text>
-                  <Text style={styles.menuItemText}>Dark Mode</Text>
-                </View>
-                <Switch
-                  value={isDarkMode}
-                  onValueChange={handleToggleDarkMode}
-                  trackColor={{ false: theme.border, true: theme.primary }}
-                  thumbColor={theme.surface}
-                />
-              </View>
-
-              <View style={styles.menuDivider} />
-
-              <TouchableOpacity 
-                style={styles.menuItem}
-                onPress={handleLogout}
-              >
-                <Text style={styles.menuItemIcon}>🚪</Text>
-                <Text style={[styles.menuItemText, styles.logoutText]}>Logout</Text>
-              </TouchableOpacity>
-            </ScrollView>
-
-            {/* Menu Footer */}
-            <View style={styles.menuFooter}>
-              <Text style={styles.menuVersion}>AllGo v0.1</Text>
-            </View>
-          </View>
-        </Pressable>
-      </Modal>
     </SafeAreaView>
   );
 }
@@ -348,19 +270,6 @@ function createStyles(theme: CustomerTheme) {
     borderBottomWidth: 1,
     borderBottomColor: theme.border,
   },
-  menuButton: {
-    width: 40,
-    height: 40,
-    justifyContent: "center",
-    alignItems: "center",
-  },
-  menuLine: {
-    width: 22,
-    height: 2,
-    backgroundColor: theme.text,
-    marginVertical: 2.5,
-    borderRadius: 1,
-  },
   logoText: {
     fontSize: 22,
     fontWeight: "bold",
@@ -368,10 +277,6 @@ function createStyles(theme: CustomerTheme) {
   },
   logoAccent: {
     color: theme.primary,
-  },
-  headerRight: {
-    width: 40,
-    alignItems: "flex-end",
   },
   userAvatar: {
     width: 36,
@@ -565,10 +470,6 @@ function createStyles(theme: CustomerTheme) {
     borderRadius: 16,
     padding: SPACING.md,
   },
-  infoIcon: {
-    fontSize: 20,
-    marginRight: SPACING.sm,
-  },
   infoText: {
     flex: 1,
     fontSize: 13,
@@ -578,108 +479,5 @@ function createStyles(theme: CustomerTheme) {
 
 
 
-  // Menu Modal
-  menuOverlay: {
-    flex: 1,
-    backgroundColor: theme.overlay,
-  },
-  menuContainer: {
-    width: SCREEN_WIDTH * 0.8,
-    height: "100%",
-    backgroundColor: theme.background,
-  },
-  menuHeader: {
-    flexDirection: "row",
-    alignItems: "center",
-    padding: SPACING.lg,
-    paddingTop: SPACING.xl + 20,
-    backgroundColor: theme.surface,
-    borderBottomWidth: 1,
-    borderBottomColor: theme.border,
-  },
-  menuUserAvatar: {
-    width: 56,
-    height: 56,
-    borderRadius: 28,
-    backgroundColor: theme.inverseSoft,
-    justifyContent: "center",
-    alignItems: "center",
-  },
-  menuAvatarText: {
-    color: theme.primaryDark,
-    fontSize: 24,
-    fontWeight: "bold",
-  },
-  menuUserInfo: {
-    flex: 1,
-    marginLeft: SPACING.md,
-  },
-  menuUserName: {
-    fontSize: 18,
-    fontWeight: "bold",
-    color: theme.text,
-  },
-  menuUserPhone: {
-    fontSize: 14,
-    color: theme.textSecondary,
-    marginTop: 2,
-  },
-  menuCloseBtn: {
-    width: 36,
-    height: 36,
-    borderRadius: 18,
-    backgroundColor: theme.primaryPale,
-    justifyContent: "center",
-    alignItems: "center",
-  },
-  menuCloseText: {
-    color: theme.primaryDark,
-    fontSize: 18,
-  },
-  menuItems: {
-    flex: 1,
-    paddingTop: SPACING.md,
-  },
-  menuItemRow: {
-    justifyContent: "space-between",
-  },
-  menuItemLeft: {
-    flexDirection: "row",
-    alignItems: "center",
-  },
-  menuItem: {
-    flexDirection: "row",
-    alignItems: "center",
-    paddingVertical: SPACING.md,
-    paddingHorizontal: SPACING.lg,
-  },
-  menuItemIcon: {
-    fontSize: 22,
-    marginRight: SPACING.md,
-    width: 32,
-  },
-  menuItemText: {
-    fontSize: 16,
-    color: theme.text,
-  },
-  menuDivider: {
-    height: 1,
-    backgroundColor: theme.border,
-    marginVertical: SPACING.md,
-    marginHorizontal: SPACING.lg,
-  },
-  logoutText: {
-    color: theme.error,
-  },
-  menuFooter: {
-    padding: SPACING.lg,
-    borderTopWidth: 1,
-    borderTopColor: theme.border,
-  },
-  menuVersion: {
-    fontSize: 12,
-    color: theme.textSecondary,
-    textAlign: "center",
-  },
 });
 }

@@ -33,6 +33,8 @@ function getStatusLabels(theme: CustomerTheme): Record<string, { label: string; 
     REQUESTED: { label: "Finding driver...", color: theme.warning },
     ACCEPTED: { label: "Driver assigned", color: theme.primary },
     ARRIVING: { label: "Driver is on the way", color: theme.primary },
+    ARRIVED: { label: "Driver has arrived", color: theme.primary },
+    STARTED: { label: "Trip in progress", color: theme.success },
     ACTIVE: { label: "Trip in progress", color: theme.success },
     IN_PROGRESS: { label: "Trip in progress", color: theme.success },
     COMPLETED: { label: "Trip completed", color: theme.success },
@@ -105,7 +107,10 @@ export default function ActiveTripScreen() {
 
           // Navigate to feedback on completion
           if (data.status === "COMPLETED") {
-            router.replace("/(main)/feedback");
+            router.replace({
+              pathname: "/(main)/feedback",
+              params: { tripId: currentTrip.id },
+            });
           }
         }
       });
@@ -143,7 +148,10 @@ export default function ActiveTripScreen() {
   };
 
   const handleCancelTrip = async () => {
-    if (!currentTrip || currentTrip.status === "ACTIVE") {
+    if (
+      !currentTrip ||
+      ["STARTED", "ACTIVE", "IN_PROGRESS", "COMPLETED"].includes(currentTrip.status)
+    ) {
       return;
     }
 
@@ -164,7 +172,7 @@ export default function ActiveTripScreen() {
       return;
     }
 
-    const message = `I'm on a AllGo trip!\n\n` +
+    const message = `I'm on an AllGo trip!\n\n` +
       `Driver: ${currentTrip.driver.name}\n` +
       `Phone: ${currentTrip.driver.phone}\n` +
       `Vehicle: ${currentTrip.vehicleType}\n` +
@@ -239,12 +247,14 @@ export default function ActiveTripScreen() {
           </View>
         )}
 
-        {/* Section 20: Share Trip Button for Safety */}
         {currentTrip.driver && (
-          <TouchableOpacity style={styles.shareButton} onPress={handleShareTrip}>
-            <Text style={styles.shareButtonIcon}>📤</Text>
-            <Text style={styles.shareButtonText}>Share Trip Details</Text>
-            <Text style={styles.shareButtonHint}>Send to a trusted contact</Text>
+          <TouchableOpacity
+            style={styles.shareButton}
+            onPress={handleShareTrip}
+            accessibilityRole="button"
+            accessibilityLabel="Share trip details"
+          >
+            <Text style={styles.shareButtonText}>Share trip details</Text>
           </TouchableOpacity>
         )}
 
@@ -277,17 +287,15 @@ export default function ActiveTripScreen() {
           )}
         </View>
 
-        {/* Payment reminder */}
         <View style={styles.paymentReminder}>
           <Text style={styles.paymentReminderText}>
-            💵 Remember to negotiate fare with driver
+            Agree the fare with your driver and pay directly after the trip.
           </Text>
         </View>
 
-        {/* Cancel button (only show if not in progress) */}
-        {currentTrip.status !== "ACTIVE" && currentTrip.status !== "IN_PROGRESS" && currentTrip.status !== "COMPLETED" && (
+        {!["STARTED", "ACTIVE", "IN_PROGRESS", "COMPLETED"].includes(currentTrip.status) && (
           <TouchableOpacity style={styles.cancelButton} onPress={handleCancelTrip}>
-            <Text style={styles.cancelButtonText}>Cancel Trip</Text>
+            <Text style={styles.cancelButtonText}>Cancel trip</Text>
           </TouchableOpacity>
         )}
       </View>
@@ -452,29 +460,21 @@ function createStyles(theme: CustomerTheme) {
   },
   // Section 20: Share Trip button styles
   shareButton: {
+    minHeight: 48,
     backgroundColor: theme.primaryPale,
     borderWidth: 1,
     borderColor: theme.primary,
     borderRadius: 12,
-    padding: 14,
+    paddingHorizontal: 14,
+    paddingVertical: 12,
     marginBottom: 16,
-    flexDirection: "row",
     alignItems: "center",
     justifyContent: "center",
-    gap: 8,
-  },
-  shareButtonIcon: {
-    fontSize: 20,
   },
   shareButtonText: {
     color: theme.primaryDark,
     fontWeight: "600",
     fontSize: 15,
-  },
-  shareButtonHint: {
-    color: theme.primaryDark,
-    fontSize: 11,
-    opacity: 0.7,
   },
 });
 }

@@ -98,16 +98,17 @@ export default function PhoneScreen() {
           </Text>
         </TouchableOpacity>
 
-        {/* Dev Login Button */}
-        <TouchableOpacity
-          style={[styles.devButton]}
-          onPress={handleDevLogin}
-          disabled={isLoading}
-        >
-          <Text style={styles.devButtonText}>
-            🔧 Dev Login (Skip OTP)
-          </Text>
-        </TouchableOpacity>
+        {__DEV__ && (
+          <TouchableOpacity
+            style={styles.devButton}
+            onPress={handleDevLogin}
+            disabled={isLoading}
+          >
+            <Text style={styles.devButtonText}>
+              Dev Login (Skip OTP)
+            </Text>
+          </TouchableOpacity>
+        )}
 
         <Text style={styles.terms}>
           By continuing, you agree to our Terms of Service and Privacy Policy

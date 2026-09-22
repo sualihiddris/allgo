@@ -43,12 +43,12 @@ export default function FeedbackScreen() {
       
       // Reset booking state and go home
       reset();
-      router.replace("/home");
+      router.replace("/(main)/home");
     } catch (error) {
       console.error("Failed to submit feedback:", error);
       Alert.alert("Error", "Failed to submit feedback. Going home...");
       reset();
-      router.replace("/home");
+      router.replace("/(main)/home");
     } finally {
       setIsSubmitting(false);
     }
@@ -56,7 +56,7 @@ export default function FeedbackScreen() {
 
   const handleSkip = () => {
     reset();
-    router.replace("/home");
+    router.replace("/(main)/home");
   };
 
   const canSubmit = rating > 0 && fareRating !== null;
@@ -64,7 +64,7 @@ export default function FeedbackScreen() {
   return (
     <SafeAreaView style={styles.container}>
       <View style={styles.header}>
-        <Text style={styles.headerTitle}>Trip Complete! 🎉</Text>
+        <Text style={styles.headerTitle}>Trip completed</Text>
       </View>
 
       <View style={styles.content}>
@@ -93,7 +93,7 @@ export default function FeedbackScreen() {
 
         {/* Fare Rating */}
         <View style={styles.section}>
-          <Text style={styles.sectionTitle}>Was the fare fair?</Text>
+          <Text style={styles.sectionTitle}>How was the agreed fare?</Text>
           <View style={styles.buttonRow}>
             {[
               { value: "fair" as const, label: "Fair" },
@@ -123,10 +123,10 @@ export default function FeedbackScreen() {
 
         {/* Issue Text */}
         <View style={styles.section}>
-          <Text style={styles.sectionTitle}>Any issues? (Optional)</Text>
+          <Text style={styles.sectionTitle}>Anything we should know? (optional)</Text>
           <TextInput
             style={styles.issueInput}
-            placeholder="Tell us what went wrong..."
+            placeholder="Share any issue or helpful detail"
             placeholderTextColor={theme.textSecondary}
             value={issue}
             onChangeText={setIssue}
@@ -280,11 +280,6 @@ function createStyles(theme: CustomerTheme) {
     borderRadius: 16,
     alignItems: "center",
     justifyContent: "center",
-    shadowColor: theme.primary,
-    shadowOffset: { width: 0, height: 6 },
-    shadowOpacity: 0.28,
-    shadowRadius: 14,
-    elevation: 4,
   },
   submitDisabled: {
     backgroundColor: theme.disabled,

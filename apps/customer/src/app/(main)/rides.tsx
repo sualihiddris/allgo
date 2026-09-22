@@ -9,10 +9,12 @@ import bookingService from "../../services/booking";
 type TripHistoryItem = Awaited<ReturnType<typeof bookingService.getTrips>>[number];
 
 const STATUS_LABELS: Record<string, string> = {
-  REQUESTED: "Searching",
-  ACCEPTED: "Accepted",
-  ARRIVED: "Arrived",
+  REQUESTED: "Finding driver",
+  ACCEPTED: "Driver assigned",
+  ARRIVED: "Driver arrived",
   STARTED: "In progress",
+  ACTIVE: "In progress",
+  IN_PROGRESS: "In progress",
   COMPLETED: "Completed",
   CANCELLED: "Cancelled",
 };
@@ -23,6 +25,8 @@ export default function RidesScreen() {
   const styles = createStyles(theme);
   const [trips, setTrips] = useState<TripHistoryItem[]>([]);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [reloadKey, setReloadKey] = useState(0);
 
   useEffect(() => {
     let mounted = true;
@@ -32,9 +36,13 @@ export default function RidesScreen() {
         const data = await bookingService.getTrips();
         if (mounted) {
           setTrips(data);
+          setLoadError(null);
         }
       } catch (error) {
         console.error("Failed to load trip history:", error);
+        if (mounted) {
+          setLoadError("We couldn't load your trips. Check your connection and try again.");
+        }
       } finally {
         if (mounted) {
           setLoading(false);
@@ -47,26 +55,45 @@ export default function RidesScreen() {
     return () => {
       mounted = false;
     };
-  }, []);
+  }, [reloadKey]);
 
   return (
     <SafeAreaView style={styles.container} edges={["top"]}>
       <View style={styles.header}>
-        <Text style={styles.title}>Trip History</Text>
-        <Text style={styles.subtitle}>Your recent rides and deliveries</Text>
+        <Text style={styles.title}>Your trips</Text>
+        <Text style={styles.subtitle}>Rides and deliveries you've requested</Text>
       </View>
 
       {loading ? (
         <View style={styles.centered}>
           <ActivityIndicator size="large" color={theme.primary} />
         </View>
+      ) : loadError ? (
+        <View style={styles.emptyState}>
+          <Text style={styles.emptyTitle}>Couldn't load trips</Text>
+          <Text style={styles.emptyText}>{loadError}</Text>
+          <TouchableOpacity
+            style={styles.primaryButton}
+            onPress={() => {
+              setLoading(true);
+              setLoadError(null);
+              setReloadKey((value) => value + 1);
+            }}
+          >
+            <Text style={styles.primaryButtonText}>Try again</Text>
+          </TouchableOpacity>
+        </View>
       ) : trips.length === 0 ? (
         <View style={styles.emptyState}>
-          <Text style={styles.emptyEmoji}>🛣️</Text>
           <Text style={styles.emptyTitle}>No trips yet</Text>
-          <Text style={styles.emptyText}>Your ride history will appear here once you book.</Text>
-          <TouchableOpacity style={styles.primaryButton} onPress={() => router.push("/home")}>
-            <Text style={styles.primaryButtonText}>Book a Ride</Text>
+          <Text style={styles.emptyText}>
+            Trips you request will appear here.
+          </Text>
+          <TouchableOpacity
+            style={styles.primaryButton}
+            onPress={() => router.replace("/(main)/home")}
+          >
+            <Text style={styles.primaryButtonText}>Go to Home</Text>
           </TouchableOpacity>
         </View>
       ) : (
@@ -118,7 +145,6 @@ function createStyles(theme: CustomerTheme) {
     justifyContent: "center",
     padding: SPACING.xl,
   },
-  emptyEmoji: { fontSize: 48, marginBottom: SPACING.md },
   emptyTitle: { fontSize: 18, fontWeight: "600", color: theme.text },
   emptyText: { fontSize: 14, color: theme.textSecondary, textAlign: "center", marginTop: 8 },
   primaryButton: {
@@ -129,11 +155,6 @@ function createStyles(theme: CustomerTheme) {
     backgroundColor: theme.primary,
     alignItems: "center",
     justifyContent: "center",
-    shadowColor: theme.primary,
-    shadowOffset: { width: 0, height: 6 },
-    shadowOpacity: 0.28,
-    shadowRadius: 14,
-    elevation: 4,
   },
   primaryButtonText: { color: theme.textInverse, fontSize: 16, fontWeight: "600" },
   listContent: { padding: SPACING.lg, paddingTop: SPACING.sm, gap: SPACING.md },
@@ -143,11 +164,6 @@ function createStyles(theme: CustomerTheme) {
     borderRadius: 18,
     backgroundColor: theme.surface,
     padding: SPACING.md,
-    shadowColor: "#0F172A",
-    shadowOffset: { width: 0, height: 6 },
-    shadowOpacity: 0.04,
-    shadowRadius: 16,
-    elevation: 1,
   },
   cardTopRow: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: SPACING.sm },
   tripTitle: { flex: 1, fontSize: 16, fontWeight: "600", color: theme.text },
