@@ -1,11 +1,29 @@
 import { Tabs } from "expo-router";
-import { StyleSheet } from "react-native";
+import { StyleSheet, View } from "react-native";
 import { CustomerTheme } from "../../constants/config";
 import { useTheme } from "../../hooks/useTheme";
 
 export default function MainLayout() {
   const theme = useTheme();
   const styles = createStyles(theme);
+
+  const renderTabMarker = ({
+    focused,
+    color,
+  }: {
+    focused: boolean;
+    color: string;
+  }) => (
+    <View
+      style={[
+        styles.tabMarker,
+        {
+          width: focused ? 18 : 6,
+          backgroundColor: color,
+        },
+      ]}
+    />
+  );
 
   return (
     <Tabs
@@ -22,6 +40,7 @@ export default function MainLayout() {
         name="home"
         options={{
           title: "Home",
+          tabBarIcon: renderTabMarker,
         }}
       />
       <Tabs.Screen
@@ -36,6 +55,7 @@ export default function MainLayout() {
         name="rides"
         options={{
           title: "Rides",
+          tabBarIcon: renderTabMarker,
         }}
       />
       <Tabs.Screen
@@ -54,6 +74,7 @@ export default function MainLayout() {
         name="profile"
         options={{
           title: "Account",
+          tabBarIcon: renderTabMarker,
         }}
       />
       <Tabs.Screen
@@ -81,6 +102,10 @@ function createStyles(theme: CustomerTheme) {
     tabLabel: {
       fontSize: 13,
       fontWeight: "600",
+    },
+    tabMarker: {
+      height: 3,
+      borderRadius: 2,
     },
   });
 }
