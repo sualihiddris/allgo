@@ -5,10 +5,10 @@ import { useAuthStore, useThemeStore, AppearanceMode } from "../../store";
 import { SPACING, CustomerTheme } from "../../constants/config";
 import { useTheme } from "../../hooks/useTheme";
 
-const APPEARANCE_OPTIONS: { value: AppearanceMode; label: string; icon: string }[] = [
-  { value: "light", label: "Light", icon: "☀️" },
-  { value: "dark", label: "Dark", icon: "🌙" },
-  { value: "system", label: "System", icon: "📱" },
+const APPEARANCE_OPTIONS: { value: AppearanceMode; label: string }[] = [
+  { value: "light", label: "Light" },
+  { value: "dark", label: "Dark" },
+  { value: "system", label: "System" },
 ];
 
 export default function ProfileScreen() {
@@ -36,19 +36,9 @@ export default function ProfileScreen() {
     );
   };
 
-  const showComingSoon = (feature: string) => {
-    Alert.alert(feature, "This is coming in a future update.");
-  };
-
-  // Loyalty/rewards/referral are explicitly out of MVP scope (master plan
-  // Section 1) and "Saved Places" has no backing feature built yet - both
-  // were removed rather than left as dead taps. Support doesn't have
-  // content yet either, but unlike those it's a real, planned feature -
-  // it gets an honest "coming soon" instead of a silent no-op.
   const menuItems = [
-    { icon: "👤", label: "Edit Profile", onPress: () => router.push("/(main)/edit-profile") },
-    { icon: "📞", label: "Support", onPress: () => showComingSoon("Support") },
-    { icon: "📄", label: "Terms & Privacy", onPress: () => router.push("/(main)/terms-privacy") },
+    { label: "Edit profile", onPress: () => router.push("/(main)/edit-profile") },
+    { label: "Terms & privacy", onPress: () => router.push("/(main)/terms-privacy") },
   ];
 
   return (
@@ -61,7 +51,7 @@ export default function ProfileScreen() {
               {user?.name?.charAt(0).toUpperCase() || "?"}
             </Text>
           </View>
-          <Text style={styles.name}>{user?.name || "User"}</Text>
+          <Text style={styles.name}>{user?.name || "Customer"}</Text>
           <Text style={styles.phone}>{user?.phone}</Text>
         </View>
 
@@ -78,7 +68,6 @@ export default function ProfileScreen() {
                   onPress={() => setAppearanceMode(opt.value)}
                   activeOpacity={0.7}
                 >
-                  <Text style={styles.appearanceIcon}>{opt.icon}</Text>
                   <Text style={[styles.appearanceLabel, active && styles.appearanceLabelActive]}>
                     {opt.label}
                   </Text>
@@ -90,13 +79,12 @@ export default function ProfileScreen() {
 
         {/* Menu Items */}
         <View style={styles.menu}>
-          {menuItems.map((item, index) => (
+          {menuItems.map((item) => (
             <TouchableOpacity
-              key={index}
+              key={item.label}
               style={styles.menuItem}
               onPress={item.onPress}
             >
-              <Text style={styles.menuIcon}>{item.icon}</Text>
               <Text style={styles.menuLabel}>{item.label}</Text>
               <Text style={styles.menuChevron}>›</Text>
             </TouchableOpacity>
@@ -179,10 +167,6 @@ function createStyles(theme: CustomerTheme) {
   appearanceOptionActive: {
     backgroundColor: theme.primary,
   },
-  appearanceIcon: {
-    fontSize: 20,
-    marginBottom: 4,
-  },
   appearanceLabel: {
     fontSize: 12,
     fontWeight: "600",
@@ -200,10 +184,6 @@ function createStyles(theme: CustomerTheme) {
     paddingVertical: SPACING.md,
     borderBottomWidth: 1,
     borderBottomColor: theme.border,
-  },
-  menuIcon: {
-    fontSize: 24,
-    marginRight: SPACING.md,
   },
   menuLabel: {
     flex: 1,

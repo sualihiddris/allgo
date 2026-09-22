@@ -117,7 +117,7 @@ export default function BookingConfirmScreen() {
         <TouchableOpacity onPress={() => router.back()} style={styles.backButton}>
           <Text style={styles.backIcon}>←</Text>
         </TouchableOpacity>
-        <Text style={styles.headerTitle}>Confirm Booking</Text>
+        <Text style={styles.headerTitle}>Review booking</Text>
       </View>
 
       <ScrollView style={styles.content}>
@@ -128,7 +128,7 @@ export default function BookingConfirmScreen() {
             <View style={styles.nightText}>
               <Text style={styles.nightTitle}>Night Service Active</Text>
               <Text style={styles.nightDescription}>
-                Night rides may cost slightly more than daytime. Fare is agreed directly with your rider.
+                Night rides may cost slightly more than daytime. Fare is agreed directly with your driver.
               </Text>
             </View>
           </View>
@@ -149,7 +149,7 @@ export default function BookingConfirmScreen() {
 
         {/* Vehicle Selection */}
         <View style={styles.section}>
-          <Text style={styles.sectionTitle}>Select Vehicle</Text>
+          <Text style={styles.sectionTitle}>Choose a vehicle</Text>
           <View style={styles.vehicleList}>
             {(Object.keys(VEHICLE_INFO) as VehicleType[]).map((type) => {
               const info = VEHICLE_INFO[type];
@@ -194,7 +194,7 @@ export default function BookingConfirmScreen() {
         {/* MOTO Service Type Selection (only for MOTO) */}
         {vehicleType === "MOTO" && (
           <View style={styles.section}>
-            <Text style={styles.sectionTitle}>Passenger or Delivery?</Text>
+            <Text style={styles.sectionTitle}>What do you need?</Text>
             <View style={styles.toggleRow}>
               {(Object.keys(SERVICE_TYPES) as ServiceType[]).map((type) => {
                 const info = SERVICE_TYPES[type];
@@ -257,7 +257,7 @@ export default function BookingConfirmScreen() {
 
         {/* Note for Driver */}
         <View style={styles.section}>
-          <Text style={styles.sectionTitle}>Note for Driver (Optional)</Text>
+          <Text style={styles.sectionTitle}>Pickup note (optional)</Text>
           <TextInput
             style={styles.noteInput}
             placeholder="e.g., Landmark near pickup, special instructions..."
@@ -294,7 +294,7 @@ export default function BookingConfirmScreen() {
           {isBooking ? (
             <ActivityIndicator color={theme.textInverse} />
           ) : (
-            <Text style={styles.confirmText}>Find Rider</Text>
+            <Text style={styles.confirmText}>Find Driver</Text>
           )}
         </TouchableOpacity>
       </View>
@@ -536,11 +536,6 @@ function createStyles(theme: CustomerTheme) {
     borderRadius: 16,
     alignItems: "center",
     justifyContent: "center",
-    shadowColor: theme.primary,
-    shadowOffset: { width: 0, height: 6 },
-    shadowOpacity: 0.28,
-    shadowRadius: 14,
-    elevation: 4,
   },
   confirmDisabled: {
     backgroundColor: theme.disabled,
