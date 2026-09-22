@@ -134,14 +134,18 @@ class AdminAuthService {
   }
 
   async getMe(): Promise<AdminUser | null> {
-    try {
-      const response = await this.authenticatedFetch(`${API_BASE_URL}/auth/me`);
-      if (!response.ok) return null;
-      const data = await response.json();
-      return data.data;
-    } catch {
+    const response = await this.authenticatedFetch(`${API_BASE_URL}/auth/me`);
+
+    if (response.status === 401 || response.status === 403) {
       return null;
     }
+
+    if (!response.ok) {
+      throw new Error('Failed to verify admin session');
+    }
+
+    const data = await response.json();
+    return data.data;
   }
 
   async logout(): Promise<void> {
