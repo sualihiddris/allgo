@@ -98,7 +98,12 @@ export const useDriverStore = create<DriverState>((set, get) => ({
       const result = await driverApiService.setOnline(newOnlineStatus);
       
       if (result.success) {
-        set({ isOnline: newOnlineStatus });
+        // Night rides are an explicit per-online-session opt-in.
+        // Reset it whenever the driver changes work state.
+        set({
+          isOnline: newOnlineStatus,
+          nightMode: false,
+        });
       }
       
       return result;

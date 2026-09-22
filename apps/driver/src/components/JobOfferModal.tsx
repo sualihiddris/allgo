@@ -1,15 +1,17 @@
 import { useState, useEffect, useRef } from "react";
 import {
-  Modal,
-  View,
-  Text,
-  StyleSheet,
-  TouchableOpacity,
   ActivityIndicator,
   Dimensions,
+  Modal,
+  ScrollView,
+  StyleSheet,
+  Text,
+  TouchableOpacity,
+  View,
 } from "react-native";
 import { COLORS, SPACING } from "../constants/config";
 import { useJobStore } from "../store/jobStore";
+import { isNightServiceHours } from "@allgo/shared/constants/nightService";
 
 interface JobOfferModalProps {
   visible: boolean;
@@ -17,31 +19,28 @@ interface JobOfferModalProps {
   onDecline: () => void;
 }
 
-import { isNightServiceHours } from "@allgo/shared/constants/nightService";
+function formatDistance(meters: number): string {
+  const km = (meters / 1000).toFixed(1);
+  return `${km} km away`;
+}
 
-// Icons for service types and delivery types
-const SERVICE_ICONS = {
-  PASSENGER: "🧑",
-  DELIVERY: "📦",
-};
+function formatDeliveryType(value?: string | null): string {
+  if (!value) return "Delivery";
 
-const DELIVERY_ICONS = {
-  FOOD: "🍜",
-  GROCERIES: "🛒",
-  PARCELS: "📦",
-  OTHER: "❓",
-};
+  return value
+    .toLowerCase()
+    .replace(/_/g, " ")
+    .replace(/\b\w/g, (letter) => letter.toUpperCase());
+}
 
-const VEHICLE_ICONS = {
-  MOTO: "🏍️",
-  KEKE: "🛺",
-  MOTOR_KING: "🛻",
-};
-
-export default function JobOfferModal({ visible, onAccept, onDecline }: JobOfferModalProps) {
+export default function JobOfferModal({
+  visible,
+  onAccept,
+  onDecline,
+}: JobOfferModalProps) {
   const { currentOffer, isAccepting, isDeclining } = useJobStore();
-  
-  // Section 20: Dynamic timeout - 45s for night, 30s for day
+
+  // Section 20: Dynamic timeout - 45s for night, 30s for day.
   const countdownDuration = isNightServiceHours() ? 45 : 30;
   const [countdown, setCountdown] = useState(countdownDuration);
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -74,36 +73,25 @@ export default function JobOfferModal({ visible, onAccept, onDecline }: JobOffer
   useEffect(() => {
     if (visible && countdown === 0 && !autoDeclinedRef.current) {
       autoDeclinedRef.current = true;
+
       if (intervalRef.current) {
         clearInterval(intervalRef.current);
         intervalRef.current = null;
       }
+
       onDecline();
     }
   }, [countdown, visible, onDecline]);
 
   if (!currentOffer) return null;
 
-  const formatDistance = (meters: number) => {
-    const km = (meters / 1000).toFixed(1);
-    return `${km} km`;
-  };
-
-  // Determine if this is a delivery
   const isDelivery = currentOffer.serviceType === "DELIVERY";
-  const vehicleIcon = VEHICLE_ICONS[currentOffer.vehicleType as keyof typeof VEHICLE_ICONS] || "🚗";
-  const serviceIcon = SERVICE_ICONS[currentOffer.serviceType as keyof typeof SERVICE_ICONS] || "🧑";
-  const deliveryIcon = currentOffer.deliveryType 
-    ? DELIVERY_ICONS[currentOffer.deliveryType as keyof typeof DELIVERY_ICONS] 
-    : null;
+  const isBusy = isAccepting || isDeclining;
 
-  // Build title
-  const getTitle = () => {
-    if (isDelivery) {
-      return `Delivery Request ${deliveryIcon}`;
-    }
-    return "Ride Request";
-  };
+  const deliveryDescription =
+    currentOffer.deliveryType === "OTHER" && currentOffer.itemDescription
+      ? currentOffer.itemDescription
+      : formatDeliveryType(currentOffer.deliveryType);
 
   return (
     <Modal
@@ -114,112 +102,126 @@ export default function JobOfferModal({ visible, onAccept, onDecline }: JobOffer
     >
       <View style={styles.overlay}>
         <View style={styles.container}>
-          {/* Header */}
-          <View style={styles.header}>
-            <View style={styles.titleRow}>
-              <Text style={styles.vehicleIcon}>{vehicleIcon}</Text>
-              <Text style={styles.title}>{getTitle()}</Text>
-            </View>
-            <View style={styles.timer}>
-              <Text style={styles.timerText}>{countdown}s</Text>
-            </View>
-          </View>
+          <ScrollView
+            style={styles.scrollView}
+            contentContainerStyle={styles.scrollContent}
+            showsVerticalScrollIndicator={false}
+          >
+            <View style={styles.header}>
+              <View style={styles.headerCopy}>
+                <Text style={styles.eyebrow}>
+                  {isDelivery ? "NEW DELIVERY REQUEST" : "NEW RIDE REQUEST"}
+                </Text>
+                <Text style={styles.distance}>
+                  {formatDistance(currentOffer.distance)}
+                </Text>
+              </View>
 
-          {/* Service Type Badge (for MOTO) */}
-          {currentOffer.vehicleType === "MOTO" && (
-            <View style={[styles.badge, isDelivery ? styles.badgeDelivery : styles.badgePassenger]}>
-              <Text style={styles.badgeIcon}>{serviceIcon}</Text>
-              <Text style={styles.badgeText}>
-                {isDelivery ? "Delivery" : "Passenger"}
-              </Text>
-            </View>
-          )}
-
-          {/* Delivery Details (for MOTO DELIVERY) */}
-          {isDelivery && (
-            <View style={styles.deliverySection}>
-              <Text style={styles.deliveryLabel}>Delivering:</Text>
-              <View style={styles.deliveryType}>
-                <Text style={styles.deliveryIcon}>{deliveryIcon}</Text>
-                <Text style={styles.deliveryText}>
-                  {currentOffer.deliveryType === "OTHER" && currentOffer.itemDescription
-                    ? currentOffer.itemDescription
-                    : currentOffer.deliveryType}
+              <View
+                style={[
+                  styles.timer,
+                  countdown <= 10 && styles.timerUrgent,
+                ]}
+              >
+                <Text
+                  style={[
+                    styles.timerText,
+                    countdown <= 10 && styles.timerTextUrgent,
+                  ]}
+                >
+                  {countdown}s
                 </Text>
               </View>
             </View>
-          )}
 
-          {/* Customer Info */}
-          <View style={styles.section}>
-            <Text style={styles.label}>Customer</Text>
-            <Text style={styles.customerName}>{currentOffer.customerName}</Text>
-          </View>
+            {isDelivery && (
+              <View style={styles.deliverySection}>
+                <Text style={styles.metaLabel}>Delivery</Text>
+                <Text style={styles.deliveryText}>
+                  {deliveryDescription}
+                </Text>
+              </View>
+            )}
 
-          {/* Route Info */}
-          <View style={styles.section}>
-            <View style={styles.routeItem}>
-              <View style={styles.routeDot} />
-              <View style={styles.routeInfo}>
-                <Text style={styles.routeLabel}>Pickup</Text>
-                <Text style={styles.routeAddress}>{currentOffer.pickup.address}</Text>
+            <View style={styles.routeSection}>
+              <View style={styles.routeItem}>
+                <View style={styles.pickupDot} />
+                <View style={styles.routeCopy}>
+                  <Text style={styles.routeLabel}>Pickup</Text>
+                  <Text style={styles.routeAddress}>
+                    {currentOffer.pickup.address}
+                  </Text>
+                </View>
+              </View>
+
+              <View style={styles.routeConnector} />
+
+              <View style={styles.routeItem}>
+                <View style={styles.destinationDot} />
+                <View style={styles.routeCopy}>
+                  <Text style={styles.routeLabel}>Destination</Text>
+                  <Text style={styles.routeAddress}>
+                    {currentOffer.destination.address}
+                  </Text>
+                </View>
               </View>
             </View>
-            
-            <View style={styles.routeLine} />
-            
-            <View style={styles.routeItem}>
-              <View style={[styles.routeDot, styles.routeDotDestination]} />
-              <View style={styles.routeInfo}>
-                <Text style={styles.routeLabel}>Destination</Text>
-                <Text style={styles.routeAddress}>{currentOffer.destination.address}</Text>
+
+            <View style={styles.customerSection}>
+              <Text style={styles.metaLabel}>Customer</Text>
+              <Text style={styles.customerName}>
+                {currentOffer.customerName || "Customer"}
+              </Text>
+            </View>
+
+            {!!currentOffer.customerNote && (
+              <View style={styles.noteSection}>
+                <Text style={styles.metaLabel}>Customer note</Text>
+                <Text style={styles.noteText}>
+                  {currentOffer.customerNote}
+                </Text>
               </View>
-            </View>
-          </View>
+            )}
+          </ScrollView>
 
-          {/* Distance (no fare displayed) */}
-          <View style={styles.distanceCard}>
-            <Text style={styles.distanceIcon}>📍</Text>
-            <Text style={styles.distanceValue}>{formatDistance(currentOffer.distance)}</Text>
-            <Text style={styles.distanceLabel}>Distance</Text>
-          </View>
-
-          {/* Customer Note */}
-          {currentOffer.customerNote && (
-            <View style={styles.noteSection}>
-              <Text style={styles.noteLabel}>📝 Customer Note:</Text>
-              <Text style={styles.noteText}>{currentOffer.customerNote}</Text>
-            </View>
-          )}
-
-          {/* Payment Note */}
-          <View style={styles.paymentNote}>
-            <Text style={styles.paymentText}>💬 Negotiate fare directly with customer</Text>
-          </View>
-
-          {/* Action Buttons */}
           <View style={styles.actions}>
             <TouchableOpacity
-              style={[styles.button, styles.declineButton]}
+              style={[
+                styles.acceptButton,
+                isBusy && styles.buttonDisabled,
+              ]}
+              onPress={onAccept}
+              disabled={isBusy}
+              activeOpacity={0.8}
+              accessibilityRole="button"
+              accessibilityLabel={
+                isDelivery ? "Accept delivery" : "Accept ride"
+              }
+            >
+              {isAccepting ? (
+                <ActivityIndicator color="#FFFFFF" />
+              ) : (
+                <Text style={styles.acceptText}>
+                  {isDelivery ? "Accept Delivery" : "Accept Ride"}
+                </Text>
+              )}
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              style={[
+                styles.declineButton,
+                isBusy && styles.secondaryDisabled,
+              ]}
               onPress={onDecline}
-              disabled={isAccepting || isDeclining}
+              disabled={isBusy}
+              activeOpacity={0.75}
+              accessibilityRole="button"
+              accessibilityLabel="Decline request"
             >
               {isDeclining ? (
                 <ActivityIndicator color={COLORS.error} />
               ) : (
                 <Text style={styles.declineText}>Decline</Text>
-              )}
-            </TouchableOpacity>
-            
-            <TouchableOpacity
-              style={[styles.button, styles.acceptButton]}
-              onPress={onAccept}
-              disabled={isAccepting || isDeclining}
-            >
-              {isAccepting ? (
-                <ActivityIndicator color={COLORS.textInverse} />
-              ) : (
-                <Text style={styles.acceptText}>Accept</Text>
               )}
             </TouchableOpacity>
           </View>
@@ -237,221 +239,200 @@ const styles = StyleSheet.create({
   },
   container: {
     backgroundColor: COLORS.background,
-    borderTopLeftRadius: 24,
-    borderTopRightRadius: 24,
-    padding: SPACING.lg,
-    paddingBottom: SPACING.xl,
-    maxHeight: Dimensions.get("window").height * 0.85,
+    borderTopLeftRadius: 18,
+    borderTopRightRadius: 18,
+    maxHeight: Dimensions.get("window").height * 0.88,
+    borderTopWidth: 1,
+    borderColor: COLORS.border,
+  },
+  scrollView: {
+    flexShrink: 1,
+  },
+  scrollContent: {
+    paddingHorizontal: 20,
+    paddingTop: 20,
+    paddingBottom: SPACING.md,
   },
   header: {
     flexDirection: "row",
+    alignItems: "flex-start",
     justifyContent: "space-between",
-    alignItems: "center",
-    marginBottom: SPACING.md,
+    gap: SPACING.md,
+    marginBottom: 24,
   },
-  titleRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: SPACING.sm,
+  headerCopy: {
+    flex: 1,
   },
-  vehicleIcon: {
-    fontSize: 28,
+  eyebrow: {
+    fontSize: 13,
+    lineHeight: 18,
+    fontWeight: "700",
+    letterSpacing: 0.7,
+    color: COLORS.textSecondary,
+    marginBottom: 5,
   },
-  title: {
-    fontSize: 22,
-    fontWeight: "bold",
+  distance: {
+    fontSize: 24,
+    lineHeight: 30,
+    fontWeight: "700",
     color: COLORS.text,
   },
   timer: {
-    backgroundColor: COLORS.error + "20",
+    minWidth: 52,
+    minHeight: 40,
     paddingHorizontal: SPACING.md,
-    paddingVertical: SPACING.sm,
-    borderRadius: 20,
+    borderRadius: 10,
+    backgroundColor: COLORS.errorSoft,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  timerUrgent: {
+    backgroundColor: "#FEE2E2",
+    borderWidth: 1,
+    borderColor: "#FECACA",
   },
   timerText: {
-    fontSize: 16,
-    fontWeight: "bold",
+    fontSize: 15,
+    lineHeight: 20,
+    fontWeight: "700",
     color: COLORS.error,
   },
-  badge: {
-    flexDirection: "row",
-    alignItems: "center",
-    alignSelf: "flex-start",
-    paddingHorizontal: SPACING.md,
-    paddingVertical: SPACING.xs,
-    borderRadius: 20,
-    marginBottom: SPACING.md,
-    gap: SPACING.xs,
-  },
-  badgePassenger: {
-    backgroundColor: COLORS.primary + "20",
-  },
-  badgeDelivery: {
-    backgroundColor: COLORS.warningSoft,
-  },
-  badgeIcon: {
-    fontSize: 18,
-  },
-  badgeText: {
-    fontSize: 14,
-    fontWeight: "600",
-    color: COLORS.text,
+  timerTextUrgent: {
+    color: "#B91C1C",
   },
   deliverySection: {
-    backgroundColor: COLORS.surfaceLight,
     padding: SPACING.md,
-    borderRadius: 16,
-    marginBottom: SPACING.md,
+    marginBottom: 20,
+    borderRadius: 10,
+    backgroundColor: COLORS.warningSoft,
+    borderWidth: 1,
+    borderColor: "#FDE68A",
   },
-  deliveryLabel: {
-    fontSize: 14,
+  metaLabel: {
+    fontSize: 12,
+    lineHeight: 17,
     fontWeight: "600",
     color: COLORS.textSecondary,
-    marginBottom: SPACING.xs,
-  },
-  deliveryType: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: SPACING.sm,
-  },
-  deliveryIcon: {
-    fontSize: 24,
+    marginBottom: 4,
   },
   deliveryText: {
-    fontSize: 18,
+    fontSize: 16,
+    lineHeight: 22,
     fontWeight: "600",
     color: COLORS.text,
   },
-  section: {
-    marginBottom: SPACING.md,
-  },
-  label: {
-    fontSize: 14,
-    fontWeight: "600",
-    color: COLORS.textSecondary,
-    marginBottom: SPACING.xs,
-  },
-  customerName: {
-    fontSize: 20,
-    fontWeight: "600",
-    color: COLORS.text,
+  routeSection: {
+    marginBottom: 22,
   },
   routeItem: {
     flexDirection: "row",
     alignItems: "flex-start",
   },
-  routeDot: {
-    width: 16,
-    height: 16,
-    borderRadius: 8,
+  pickupDot: {
+    width: 12,
+    height: 12,
+    borderRadius: 6,
     backgroundColor: COLORS.primary,
+    marginTop: 5,
     marginRight: SPACING.md,
-    marginTop: 4,
   },
-  routeDotDestination: {
+  destinationDot: {
+    width: 12,
+    height: 12,
+    borderRadius: 6,
     backgroundColor: COLORS.success,
+    marginTop: 5,
+    marginRight: SPACING.md,
   },
-  routeInfo: {
+  routeCopy: {
     flex: 1,
+    minWidth: 0,
   },
   routeLabel: {
     fontSize: 12,
+    lineHeight: 17,
     fontWeight: "600",
     color: COLORS.textSecondary,
-    marginBottom: 2,
+    marginBottom: 3,
   },
   routeAddress: {
     fontSize: 16,
+    lineHeight: 23,
     color: COLORS.text,
+    flexShrink: 1,
   },
-  routeLine: {
+  routeConnector: {
     width: 2,
     height: 24,
     backgroundColor: COLORS.border,
-    marginLeft: 7,
+    marginLeft: 5,
     marginVertical: SPACING.xs,
   },
-  distanceCard: {
-    backgroundColor: COLORS.surfaceLight,
-    padding: SPACING.md,
-    borderRadius: 16,
-    alignItems: "center",
-    marginBottom: SPACING.md,
+  customerSection: {
+    paddingTop: 18,
+    borderTopWidth: 1,
+    borderTopColor: COLORS.border,
+    marginBottom: 20,
   },
-  distanceIcon: {
-    fontSize: 24,
-    marginBottom: SPACING.xs,
-  },
-  distanceValue: {
-    fontSize: 20,
-    fontWeight: "bold",
-    color: COLORS.text,
-  },
-  distanceLabel: {
-    fontSize: 12,
-    color: COLORS.textSecondary,
-    marginTop: 2,
-  },
-  noteSection: {
-    backgroundColor: COLORS.primaryPale,
-    padding: SPACING.md,
-    borderRadius: 16,
-    marginBottom: SPACING.md,
-  },
-  noteLabel: {
-    fontSize: 14,
+  customerName: {
+    fontSize: 18,
+    lineHeight: 24,
     fontWeight: "600",
     color: COLORS.text,
-    marginBottom: SPACING.xs,
+  },
+  noteSection: {
+    padding: SPACING.md,
+    borderRadius: 10,
+    backgroundColor: COLORS.surfaceMuted,
+    borderWidth: 1,
+    borderColor: COLORS.border,
   },
   noteText: {
     fontSize: 14,
+    lineHeight: 21,
     color: COLORS.text,
-    lineHeight: 20,
-  },
-  paymentNote: {
-    backgroundColor: COLORS.surface,
-    padding: SPACING.sm,
-    borderRadius: 8,
-    marginBottom: SPACING.md,
-    alignItems: "center",
-  },
-  paymentText: {
-    fontSize: 14,
-    color: COLORS.textSecondary,
-    fontStyle: "italic",
   },
   actions: {
-    flexDirection: "row",
-    gap: SPACING.md,
-  },
-  button: {
-    flex: 1,
-    paddingVertical: SPACING.md,
-    borderRadius: 16,
-    alignItems: "center",
-    justifyContent: "center",
-    minHeight: 54,
-  },
-  declineButton: {
-    backgroundColor: COLORS.errorSoft,
+    paddingHorizontal: 20,
+    paddingTop: SPACING.md,
+    paddingBottom: 24,
+    borderTopWidth: 1,
+    borderTopColor: COLORS.border,
+    backgroundColor: COLORS.background,
+    gap: SPACING.sm,
   },
   acceptButton: {
-    backgroundColor: COLORS.primary,
-    shadowColor: COLORS.primary,
-    shadowOffset: { width: 0, height: 6 },
-    shadowOpacity: 0.3,
-    shadowRadius: 14,
-    elevation: 4,
+    minHeight: 54,
+    borderRadius: 10,
+    backgroundColor: COLORS.primaryDark,
+    alignItems: "center",
+    justifyContent: "center",
+    paddingHorizontal: SPACING.lg,
   },
-  declineText: {
-    fontSize: 16,
-    fontWeight: "600",
-    color: COLORS.error,
+  buttonDisabled: {
+    opacity: 0.6,
   },
   acceptText: {
     fontSize: 16,
+    lineHeight: 22,
+    fontWeight: "700",
+    color: "#FFFFFF",
+  },
+  declineButton: {
+    minHeight: 48,
+    borderRadius: 10,
+    alignItems: "center",
+    justifyContent: "center",
+    paddingHorizontal: SPACING.lg,
+    backgroundColor: COLORS.background,
+  },
+  secondaryDisabled: {
+    opacity: 0.55,
+  },
+  declineText: {
+    fontSize: 15,
+    lineHeight: 21,
     fontWeight: "600",
-    color: COLORS.textInverse,
+    color: COLORS.error,
   },
 });
