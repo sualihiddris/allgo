@@ -1,16 +1,30 @@
 /**
- * AllGO MVP Driver Home Screen
- * 
- * Simplified: Rides only, online toggle, no earnings/ratings
- * Section 20: Night mode toggle for night service opt-in
+ * AllGo MVP Driver Home Screen
+ *
+ * Pilot UI refresh:
+ * - explicit online/offline work-state action
+ * - lightweight, light-theme-first presentation
+ * - night rides kept as an operational preference
  */
 
 import { useEffect, useState } from "react";
-import { View, Text, StyleSheet, TouchableOpacity, Switch, Alert } from "react-native";
+import {
+  Alert,
+  ScrollView,
+  StyleSheet,
+  Switch,
+  Text,
+  TouchableOpacity,
+  View,
+} from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { useRouter } from "expo-router";
 import { useDriverStore, useJobStore } from "../../store";
-import { COLORS, SPACING, getDriverTheme, DriverTheme } from "../../constants/config";
+import {
+  SPACING,
+  getDriverTheme,
+  DriverTheme,
+} from "../../constants/config";
 import socketService from "../../services/socket";
 import locationService from "../../services/location";
 import tripService from "../../services/trip";
@@ -18,11 +32,35 @@ import JobOfferModal from "../../components/JobOfferModal";
 
 import { isNightServiceHours } from "@allgo/shared/constants/nightService";
 
+function formatVehicleType(vehicleType?: string): string {
+  switch (vehicleType) {
+    case "MOTO":
+      return "Motorcycle";
+    case "KEKE":
+      return "Keke / Pragya";
+    case "MOTOR_KING":
+      return "Aboboya";
+    default:
+      return "AllGo Driver";
+  }
+}
+
 export default function HomeScreen() {
   const router = useRouter();
-  const { user, isOnline, nightMode, isUpdatingOnline, isUpdatingNightMode, toggleOnline, toggleNightMode } = useDriverStore();
-  const theme = getDriverTheme(nightMode);
+  const {
+    user,
+    isOnline,
+    nightMode,
+    isUpdatingOnline,
+    isUpdatingNightMode,
+    toggleOnline,
+    toggleNightMode,
+  } = useDriverStore();
+
+  // nightMode is an operational preference, not an appearance preference.
+  const theme = getDriverTheme(false);
   const styles = createStyles(theme);
+
   const {
     currentOffer,
     activeJob,
@@ -40,6 +78,7 @@ export default function HomeScreen() {
     let unsubscribeTripConfirmed: (() => void) | undefined;
     let unsubscribeTripAcceptFailed: (() => void) | undefined;
     let unsubscribeTripCancelled: (() => void) | undefined;
+
     const connectSocket = async () => {
       if (!isOnline) return;
 
@@ -92,44 +131,31 @@ export default function HomeScreen() {
           clearOffer();
           Alert.alert("Error", data.reason || "Failed to accept trip");
         });
-        unsubscribeTripCancelled =
-          socketService.onTripCancelled((data) => {
-            const state =
-              useJobStore.getState();
 
-            const matchesOffer =
-              state.currentOffer?.tripId ===
-              data.tripId;
+        unsubscribeTripCancelled = socketService.onTripCancelled((data) => {
+          const state = useJobStore.getState();
 
-            const matchesActiveJob =
-              state.activeJob?.id ===
-              data.tripId;
+          const matchesOffer = state.currentOffer?.tripId === data.tripId;
+          const matchesActiveJob = state.activeJob?.id === data.tripId;
 
-            // Ignore cancellation events for stale/other trips.
-            if (
-              !matchesOffer &&
-              !matchesActiveJob
-            ) {
-              return;
-            }
+          // Ignore cancellation events for stale/other trips.
+          if (!matchesOffer && !matchesActiveJob) {
+            return;
+          }
 
-            console.log(
-              "Trip cancelled:",
-              data
-            );
+          console.log("Trip cancelled:", data);
 
-            // Stop location collection before clearing the job. Home and
-            // Active Job may both receive this event; either listener must
-            // be independently safe to handle cancellation first.
-            locationService.stopTracking();
-            state.reset();
+          // Stop location collection before clearing the job. Home and
+          // Active Job may both receive this event; either listener must
+          // be independently safe to handle cancellation first.
+          locationService.stopTracking();
+          state.reset();
 
-            Alert.alert(
-              "Trip Cancelled",
-              data.reason ||
-                "The customer cancelled this trip."
-            );
-          });
+          Alert.alert(
+            "Trip Cancelled",
+            data.reason || "The customer cancelled this trip."
+          );
+        });
 
         if (!cancelled) {
           await locationService.startTracking();
@@ -165,9 +191,16 @@ export default function HomeScreen() {
 
     let cancelled = false;
 
-    tripService.getActiveTrips()
+    tripService
+      .getActiveTrips()
       .then((trips) => {
-        if (cancelled || !trips.length || useJobStore.getState().activeJob) return;
+        if (
+          cancelled ||
+          !trips.length ||
+          useJobStore.getState().activeJob
+        ) {
+          return;
+        }
 
         const trip = trips[0];
         clearOffer();
@@ -202,29 +235,26 @@ export default function HomeScreen() {
     }
   };
 
-  // Section 20: Handle night mode toggle
   const handleToggleNightMode = async () => {
     const result = await toggleNightMode();
-    
+
     if (result.success && !nightMode) {
-      // Night mode was just enabled
       Alert.alert(
-        "Night Mode Enabled",
-        "You'll receive ride requests during night hours (9pm-5am). Night rides may have different pricing agreed with customers.",
-        [{ text: "OK" }]
+        "Night rides enabled",
+        "You'll receive ride requests during night hours (9 PM–5 AM)."
       );
     } else if (!result.success) {
       Alert.alert("Error", result.message);
     }
   };
 
-  // Section 20: Check if it's currently night hours
   const [isNightTime, setIsNightTime] = useState(isNightServiceHours());
-  
+
   useEffect(() => {
     const interval = setInterval(() => {
       setIsNightTime(isNightServiceHours());
-    }, 60000); // Check every minute
+    }, 60000);
+
     return () => clearInterval(interval);
   }, []);
 
@@ -243,146 +273,160 @@ export default function HomeScreen() {
   };
 
   const isApproved = !!user?.driver?.isApproved;
+
   // Section 4A: subscription must be active to go online - mirrors the
-  // server-side check in PATCH /driver/online so the toggle never looks
-  // tappable when it would just be rejected
-  const isSubscriptionActive = user?.driver?.subscriptionStatus === "ACTIVE";
+  // server-side check in PATCH /driver/online.
+  const isSubscriptionActive =
+    user?.driver?.subscriptionStatus === "ACTIVE";
+
+  const canChangeOnline =
+    !isUpdatingOnline &&
+    (isOnline || (isApproved && isSubscriptionActive));
 
   return (
     <SafeAreaView style={styles.container}>
-      {/* Header */}
-      <View style={styles.header}>
-        <View>
-          <Text style={styles.greeting}>Hello, {user?.name || "Rider"}</Text>
-          <Text style={styles.subtitle}>
-            {user?.driver?.vehicleType || "AllGO Rider"}
+      <ScrollView
+        style={styles.scrollView}
+        contentContainerStyle={styles.content}
+        showsVerticalScrollIndicator={false}
+      >
+        <View style={styles.header}>
+          <Text style={styles.brandLabel}>AllGo Driver</Text>
+          <Text style={styles.greeting}>
+            Hello, {user?.name || "Driver"}
+          </Text>
+          <Text style={styles.vehicleLabel}>
+            {formatVehicleType(user?.driver?.vehicleType)}
           </Text>
         </View>
-        <View style={styles.statusDot}>
-          <Text style={styles.statusEmoji}>{isOnline ? "🟢" : "⚫"}</Text>
-        </View>
-      </View>
 
-      {/* Online Toggle */}
-      <View style={styles.toggleCard}>
-        <View style={styles.toggleInfo}>
-          <Text style={styles.toggleTitle}>Go Online</Text>
-          <Text style={styles.toggleSubtitle}>
-            {isOnline ? "You're receiving ride requests" : "Toggle on to start receiving requests"}
-          </Text>
-        </View>
-        <Switch
-          value={isOnline}
-          onValueChange={handleToggleOnline}
-          trackColor={{ false: COLORS.border, true: COLORS.success }}
-          thumbColor={COLORS.textInverse}
-          disabled={!isApproved || !isSubscriptionActive || isUpdatingOnline}
-        />
-      </View>
-
-      {/* Section 20: Night Mode Toggle */}
-      {isApproved && (
-        <View style={[styles.toggleCard, nightMode && styles.nightModeCard]}>
-          <View style={styles.toggleInfo}>
-            <View style={styles.nightModeHeader}>
-              <Text style={styles.toggleTitle}>
-                🌙 Night Mode {isNightTime && <Text style={styles.nightActiveLabel}>(Active Now)</Text>}
-              </Text>
+        {!isApproved && (
+          <View style={styles.noticeBanner}>
+            <View style={styles.noticeMarker}>
+              <Text style={styles.noticeMarkerText}>!</Text>
             </View>
-            <Text style={styles.toggleSubtitle}>
-              {nightMode 
-                ? "You'll receive requests 9pm-5am" 
-                : "Enable to work during night hours"}
-            </Text>
-          </View>
-          <Switch
-            value={nightMode}
-            onValueChange={handleToggleNightMode}
-            trackColor={{ false: COLORS.border, true: COLORS.primaryDark }}
-            thumbColor={COLORS.textInverse}
-            disabled={isUpdatingNightMode}
-          />
-        </View>
-      )}
-
-      {/* Night Service Banner (show during night hours) */}
-      {isNightTime && isOnline && nightMode && isApproved && (
-        <View style={styles.nightBanner}>
-          <Text style={styles.nightBannerIcon}>🌙</Text>
-          <View style={styles.nightBannerInfo}>
-            <Text style={styles.nightBannerTitle}>Night Service Active</Text>
-            <Text style={styles.nightBannerText}>
-              Extended search radius • 45s response time • Premium rates apply
-            </Text>
-          </View>
-        </View>
-      )}
-
-      {/* Verification Status */}
-      {!isApproved && (
-        <View style={styles.verificationBanner}>
-          <Text style={styles.verificationIcon}>⚠️</Text>
-          <View style={styles.verificationInfo}>
-            <Text style={styles.verificationTitle}>Account Pending Approval</Text>
-            <Text style={styles.verificationText}>
-              Your account is under review. You'll be notified when approved.
-            </Text>
-          </View>
-        </View>
-      )}
-
-      {/* Section 4A: Subscription Expired Banner */}
-      {isApproved && !isSubscriptionActive && (
-        <TouchableOpacity
-          style={styles.verificationBanner}
-          onPress={() => router.push("/(main)/subscription")}
-        >
-          <Text style={styles.verificationIcon}>💳</Text>
-          <View style={styles.verificationInfo}>
-            <Text style={styles.verificationTitle}>Subscription Expired</Text>
-            <Text style={styles.verificationText}>
-              Renew your subscription to go online. Tap to view payment instructions.
-            </Text>
-          </View>
-        </TouchableOpacity>
-      )}
-
-      {/* Waiting State */}
-      {isOnline && !activeJob && isApproved && (
-        <View style={styles.waitingState}>
-          <Text style={styles.waitingIcon}>🔍</Text>
-          <Text style={styles.waitingText}>Looking for ride requests...</Text>
-          <Text style={styles.waitingSubtext}>
-            Stay online to receive requests nearby
-          </Text>
-        </View>
-      )}
-
-      {/* Info Cards */}
-      {isApproved && (
-        <View style={styles.infoSection}>
-          <View style={styles.infoCard}>
-            <Text style={styles.infoIcon}>📍</Text>
-            <View style={styles.infoContent}>
-              <Text style={styles.infoTitle}>Your Location</Text>
-              <Text style={styles.infoText}>
-                Make sure location services are enabled
+            <View style={styles.noticeInfo}>
+              <Text style={styles.noticeTitle}>
+                Account pending approval
+              </Text>
+              <Text style={styles.noticeText}>
+                Your account is under review. You'll be notified when approved.
               </Text>
             </View>
           </View>
-          <View style={styles.infoCard}>
-            <Text style={styles.infoIcon}>📞</Text>
-            <View style={styles.infoContent}>
-              <Text style={styles.infoTitle}>Communication</Text>
-              <Text style={styles.infoText}>
-                You'll call customers directly for each trip
+        )}
+
+        {isApproved && !isSubscriptionActive && (
+          <TouchableOpacity
+            style={styles.noticeBanner}
+            onPress={() => router.push("/(main)/subscription")}
+            activeOpacity={0.75}
+          >
+            <View style={styles.noticeMarker}>
+              <Text style={styles.noticeMarkerText}>!</Text>
+            </View>
+            <View style={styles.noticeInfo}>
+              <Text style={styles.noticeTitle}>
+                Subscription expired
+              </Text>
+              <Text style={styles.noticeText}>
+                Renew your subscription to go online. Tap to view payment
+                instructions.
               </Text>
             </View>
-          </View>
-        </View>
-      )}
+          </TouchableOpacity>
+        )}
 
-      {/* Job Offer Modal */}
+        <View style={styles.workSection}>
+          <View style={styles.statusRow}>
+            <View
+              style={[
+                styles.statusIndicator,
+                isOnline
+                  ? styles.statusIndicatorOnline
+                  : styles.statusIndicatorOffline,
+              ]}
+            />
+            <Text
+              style={[
+                styles.statusText,
+                isOnline && styles.statusTextOnline,
+              ]}
+            >
+              {isOnline ? "ONLINE" : "OFFLINE"}
+            </Text>
+          </View>
+
+          {isOnline && (
+            <Text style={styles.workTitle}>
+              Waiting for a ride request
+            </Text>
+          )}
+
+          <Text style={styles.workDescription}>
+            {isOnline
+              ? "We'll notify you when a nearby request arrives."
+              : "You're not receiving ride requests."}
+          </Text>
+
+          <TouchableOpacity
+            style={[
+              styles.workButton,
+              isOnline && styles.workButtonOnline,
+              !canChangeOnline && styles.workButtonDisabled,
+            ]}
+            onPress={handleToggleOnline}
+            disabled={!canChangeOnline}
+            activeOpacity={0.8}
+          >
+            <Text
+              style={[
+                styles.workButtonText,
+                isOnline && styles.workButtonTextOnline,
+                !canChangeOnline && styles.workButtonTextDisabled,
+              ]}
+            >
+              {isUpdatingOnline
+                ? "Updating..."
+                : isOnline
+                  ? "Go Offline"
+                  : "Go Online"}
+            </Text>
+          </TouchableOpacity>
+        </View>
+
+        {isApproved && (
+          <View style={styles.nightSection}>
+            <View style={styles.nightInfo}>
+              <View style={styles.nightTitleRow}>
+                <Text style={styles.nightTitle}>Night rides</Text>
+                {isOnline && nightMode && isNightTime && (
+                  <Text style={styles.nightActiveText}>Active now</Text>
+                )}
+              </View>
+              <Text style={styles.nightDescription}>
+                {isOnline
+                  ? "Receive requests between 9 PM and 5 AM"
+                  : "Go online to enable night rides"}
+              </Text>
+            </View>
+
+            <Switch
+              value={isOnline && nightMode}
+              onValueChange={handleToggleNightMode}
+              trackColor={{
+                false: "#D1D5DB",
+                true: theme.primaryDark,
+              }}
+              thumbColor="#FFFFFF"
+              disabled={!isOnline || isUpdatingNightMode}
+              accessibilityLabel="Night rides"
+              accessibilityHint="Receive ride requests during night service hours"
+            />
+          </View>
+        )}
+      </ScrollView>
+
       <JobOfferModal
         visible={!!currentOffer}
         onAccept={handleAcceptOffer}
@@ -396,187 +440,191 @@ function createStyles(theme: DriverTheme) {
   return StyleSheet.create({
     container: {
       flex: 1,
-      backgroundColor: theme.background,
+      backgroundColor: "#F9FAFB",
+    },
+    scrollView: {
+      flex: 1,
+    },
+    content: {
+      paddingBottom: SPACING.xl,
     },
     header: {
-      flexDirection: "row",
-      justifyContent: "space-between",
-      alignItems: "center",
-      padding: SPACING.lg,
       backgroundColor: theme.surface,
+      paddingHorizontal: 20,
+      paddingTop: SPACING.lg,
+      paddingBottom: 20,
+      borderBottomWidth: 1,
+      borderBottomColor: theme.border,
+    },
+    brandLabel: {
+      fontSize: 13,
+      fontWeight: "700",
+      color: theme.primaryDark,
+      letterSpacing: 0.5,
+      marginBottom: SPACING.sm,
     },
     greeting: {
-      fontSize: 24,
-      fontWeight: "bold",
+      fontSize: 26,
+      lineHeight: 32,
+      fontWeight: "700",
       color: theme.text,
     },
-    subtitle: {
+    vehicleLabel: {
       fontSize: 14,
+      lineHeight: 20,
       color: theme.textSecondary,
-      marginTop: 4,
+      marginTop: 2,
     },
-    statusDot: {
-      width: 48,
-      height: 48,
-      borderRadius: 24,
-      backgroundColor: theme.background,
+    noticeBanner: {
+      flexDirection: "row",
+      alignItems: "flex-start",
+      marginHorizontal: 20,
+      marginTop: SPACING.lg,
+      padding: SPACING.md,
+      backgroundColor: theme.warningSoft,
+      borderWidth: 1,
+      borderColor: "#FDE68A",
+      borderRadius: 10,
+    },
+    noticeMarker: {
+      width: 24,
+      height: 24,
+      borderRadius: 12,
       alignItems: "center",
       justifyContent: "center",
-      borderWidth: 1,
-      borderColor: theme.border,
-    },
-    statusEmoji: {
-      fontSize: 24,
-    },
-    toggleCard: {
-      flexDirection: "row",
-      justifyContent: "space-between",
-      alignItems: "center",
-      backgroundColor: theme.surface,
-      margin: SPACING.lg,
-      padding: SPACING.lg,
-      borderRadius: 18,
-      shadowColor: "#0F172A",
-      shadowOffset: { width: 0, height: 10 },
-      shadowOpacity: 0.06,
-      shadowRadius: 24,
-      elevation: 3,
-      borderWidth: 1,
-      borderColor: theme.border,
-    },
-    toggleInfo: {
-      flex: 1,
-    },
-    toggleTitle: {
-      fontSize: 18,
-      fontWeight: "600",
-      color: theme.text,
-      marginBottom: 4,
-    },
-    toggleSubtitle: {
-      fontSize: 13,
-      color: theme.textSecondary,
-    },
-    verificationBanner: {
-      flexDirection: "row",
-      backgroundColor: theme.warningSoft,
-      margin: SPACING.lg,
-      marginTop: 0,
-      padding: SPACING.md,
-      borderRadius: 16,
-    },
-    verificationIcon: {
-      fontSize: 24,
+      backgroundColor: theme.warning,
       marginRight: SPACING.md,
     },
-    verificationInfo: {
+    noticeMarkerText: {
+      color: "#FFFFFF",
+      fontSize: 14,
+      lineHeight: 18,
+      fontWeight: "700",
+    },
+    noticeInfo: {
       flex: 1,
     },
-    verificationTitle: {
-      fontSize: 16,
+    noticeTitle: {
+      fontSize: 15,
+      lineHeight: 20,
       fontWeight: "600",
       color: theme.text,
-      marginBottom: 4,
+      marginBottom: 2,
     },
-    verificationText: {
+    noticeText: {
       fontSize: 13,
+      lineHeight: 19,
       color: theme.textSecondary,
     },
-    waitingState: {
-      alignItems: "center",
-      justifyContent: "center",
-      padding: SPACING.xl,
-      marginTop: SPACING.xl,
+    workSection: {
+      marginTop: 28,
+      paddingHorizontal: 20,
     },
-    waitingIcon: {
-      fontSize: 64,
+    statusRow: {
+      flexDirection: "row",
+      alignItems: "center",
       marginBottom: SPACING.md,
     },
-    waitingText: {
-      fontSize: 18,
-      fontWeight: "600",
+    statusIndicator: {
+      width: 9,
+      height: 9,
+      borderRadius: 5,
+      marginRight: SPACING.sm,
+    },
+    statusIndicatorOnline: {
+      backgroundColor: theme.success,
+    },
+    statusIndicatorOffline: {
+      backgroundColor: theme.textSecondary,
+    },
+    statusText: {
+      fontSize: 13,
+      lineHeight: 18,
+      fontWeight: "700",
+      letterSpacing: 0.8,
+      color: theme.textSecondary,
+    },
+    statusTextOnline: {
+      color: theme.success,
+    },
+    workTitle: {
+      fontSize: 22,
+      lineHeight: 28,
+      fontWeight: "700",
       color: theme.text,
       marginBottom: SPACING.xs,
     },
-    waitingSubtext: {
-      fontSize: 14,
+    workDescription: {
+      fontSize: 15,
+      lineHeight: 22,
       color: theme.textSecondary,
-      textAlign: "center",
+      marginBottom: 22,
     },
-    infoSection: {
-      padding: SPACING.lg,
-      gap: SPACING.md,
-    },
-    infoCard: {
-      flexDirection: "row",
-      backgroundColor: theme.surface,
-      padding: SPACING.md,
-      borderRadius: 16,
+    workButton: {
+      minHeight: 52,
+      borderRadius: 10,
+      alignItems: "center",
+      justifyContent: "center",
+      paddingHorizontal: SPACING.lg,
+      backgroundColor: theme.primaryDark,
       borderWidth: 1,
+      borderColor: theme.primaryDark,
+    },
+    workButtonOnline: {
+      backgroundColor: theme.surface,
       borderColor: theme.border,
-      shadowColor: "#0F172A",
-      shadowOffset: { width: 0, height: 6 },
-      shadowOpacity: 0.04,
-      shadowRadius: 16,
-      elevation: 1,
     },
-    infoIcon: {
-      fontSize: 32,
-      marginRight: SPACING.md,
+    workButtonDisabled: {
+      backgroundColor: theme.disabled,
+      borderColor: theme.disabled,
     },
-    infoContent: {
-      flex: 1,
-    },
-    infoTitle: {
+    workButtonText: {
       fontSize: 16,
-      fontWeight: "600",
-      color: theme.text,
-      marginBottom: 4,
+      lineHeight: 22,
+      fontWeight: "700",
+      color: "#FFFFFF",
     },
-    infoText: {
-      fontSize: 13,
+    workButtonTextOnline: {
+      color: theme.text,
+    },
+    workButtonTextDisabled: {
       color: theme.textSecondary,
     },
-    // Section 20: Night mode styles
-    nightModeCard: {
-      marginTop: 0,
-      backgroundColor: theme.surface,
-      borderWidth: 1,
-      borderColor: theme.primaryLight,
-    },
-    nightModeHeader: {
+    nightSection: {
       flexDirection: "row",
       alignItems: "center",
+      marginHorizontal: 20,
+      marginTop: 32,
+      paddingTop: 20,
+      borderTopWidth: 1,
+      borderTopColor: theme.border,
     },
-    nightActiveLabel: {
-      fontSize: 12,
-      color: theme.primaryDark,
-      fontWeight: "500",
-    },
-    nightBanner: {
-      flexDirection: "row",
-      backgroundColor: theme.primaryPale,
-      margin: SPACING.lg,
-      marginTop: 0,
-      padding: SPACING.md,
-      borderRadius: 16,
-    },
-    nightBannerIcon: {
-      fontSize: 28,
-      marginRight: SPACING.md,
-      color: theme.primaryDark,
-    },
-    nightBannerInfo: {
+    nightInfo: {
       flex: 1,
+      paddingRight: SPACING.md,
     },
-    nightBannerTitle: {
+    nightTitleRow: {
+      flexDirection: "row",
+      alignItems: "center",
+      flexWrap: "wrap",
+      marginBottom: 3,
+    },
+    nightTitle: {
       fontSize: 16,
+      lineHeight: 22,
       fontWeight: "600",
       color: theme.text,
-      marginBottom: 4,
     },
-    nightBannerText: {
+    nightActiveText: {
       fontSize: 12,
+      lineHeight: 17,
+      fontWeight: "600",
+      color: theme.success,
+      marginLeft: SPACING.sm,
+    },
+    nightDescription: {
+      fontSize: 13,
+      lineHeight: 19,
       color: theme.textSecondary,
     },
   });

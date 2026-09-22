@@ -108,13 +108,18 @@ router.patch(
 
       const updatedDriver = await prisma.driver.update({
         where: { id: driver.id },
-        data: { isOnline },
+        data: {
+          isOnline,
+          // Night rides are an explicit per-online-session opt-in.
+          nightMode: false,
+        },
       });
       
       console.log(`[Driver] ${driver.id} is now ${isOnline ? 'ONLINE' : 'OFFLINE'}`);
       
       sendSuccess(res, {
         isOnline: updatedDriver.isOnline,
+        nightMode: updatedDriver.nightMode,
         message: isOnline ? "You are now online and can receive job requests" : "You are now offline",
       });
     } catch (error) {
@@ -137,7 +142,13 @@ router.patch(
     try {
       const { nightMode } = updateNightModeSchema.parse(req.body);
       const driver = (req as any).driver;
-      
+
+      if (nightMode && !driver.isOnline) {
+        return res.status(409).json({
+          error: "Go online before enabling night rides.",
+        });
+      }
+
       // Update night mode
       await updateDriverNightMode(driver.id, nightMode);
       

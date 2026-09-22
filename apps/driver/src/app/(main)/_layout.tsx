@@ -1,10 +1,9 @@
 import { Tabs } from "expo-router";
 import { View, Text, StyleSheet } from "react-native";
 import { StatusBar } from "expo-status-bar";
-import { COLORS, getDriverTheme } from "../../constants/config";
-import { useDriverStore } from "../../store";
+import { getDriverTheme } from "../../constants/config";
 
-function TabIcon({ name, focused }: { name: string; focused: boolean }) {
+function TabIcon({ name }: { name: string; focused: boolean }) {
   const icons: Record<string, string> = {
     home: "🏠",
     profile: "👤",
@@ -18,18 +17,24 @@ function TabIcon({ name, focused }: { name: string; focused: boolean }) {
 }
 
 export default function MainLayout() {
-  const { nightMode } = useDriverStore();
-  const theme = getDriverTheme(nightMode);
+  // Night rides are an operational setting, not an appearance setting.
+  const theme = getDriverTheme(false);
 
   return (
     <>
-      <StatusBar style={nightMode ? "light" : "dark"} />
+      <StatusBar style="dark" />
       <Tabs
         screenOptions={{
           headerShown: false,
           tabBarActiveTintColor: theme.primary,
           tabBarInactiveTintColor: theme.textSecondary,
-          tabBarStyle: [styles.tabBar, { backgroundColor: theme.background, borderTopColor: theme.border }],
+          tabBarStyle: [
+            styles.tabBar,
+            {
+              backgroundColor: theme.background,
+              borderTopColor: theme.border,
+            },
+          ],
           tabBarLabelStyle: styles.tabLabel,
           sceneContainerStyle: { backgroundColor: theme.background },
         }}
@@ -38,44 +43,49 @@ export default function MainLayout() {
           name="home"
           options={{
             title: "Home",
-            tabBarIcon: ({ focused }: { focused: boolean }) => <TabIcon name="home" focused={focused} />,
+            tabBarIcon: ({ focused }: { focused: boolean }) => (
+              <TabIcon name="home" focused={focused} />
+            ),
           }}
         />
         <Tabs.Screen
           name="active-job"
           options={{
-            href: null, // Hidden from tab bar — navigated to programmatically
+            href: null,
+            tabBarStyle: { display: "none" },
           }}
         />
         <Tabs.Screen
           name="subscription"
           options={{
-            href: null, // Hidden from tab bar — navigated to programmatically
+            href: null,
           }}
         />
         <Tabs.Screen
           name="edit-profile"
           options={{
-            href: null, // Hidden from tab bar — navigated to programmatically
+            href: null,
           }}
         />
         <Tabs.Screen
           name="vehicle-details"
           options={{
-            href: null, // Hidden from tab bar — navigated to programmatically
+            href: null,
           }}
         />
         <Tabs.Screen
           name="terms-privacy"
           options={{
-            href: null, // Hidden from tab bar — navigated to programmatically
+            href: null,
           }}
         />
         <Tabs.Screen
           name="profile"
           options={{
             title: "Profile",
-            tabBarIcon: ({ focused }: { focused: boolean }) => <TabIcon name="profile" focused={focused} />,
+            tabBarIcon: ({ focused }: { focused: boolean }) => (
+              <TabIcon name="profile" focused={focused} />
+            ),
           }}
         />
       </Tabs>

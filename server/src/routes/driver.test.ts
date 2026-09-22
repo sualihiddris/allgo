@@ -5,6 +5,9 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const mocks = vi.hoisted(() => ({
   findUnique: vi.fn(),
   findMany: vi.fn(),
+  update: vi.fn(),
+  updateDriverNightMode: vi.fn(),
+  hasActiveSubscription: vi.fn(),
 }));
 
 vi.mock("../middleware", () => ({
@@ -15,18 +18,22 @@ vi.mock("../middleware", () => ({
 }));
 vi.mock("../config", () => ({
   prisma: {
-    driver: { findUnique: mocks.findUnique },
+    driver: {
+      findUnique: mocks.findUnique,
+      update: mocks.update,
+    },
     trip: { findMany: mocks.findMany },
   },
 }));
 vi.mock("../services/dispatch", () => ({
-  updateDriverNightMode: vi.fn(),
-  hasActiveSubscription: vi.fn(),
+  updateDriverNightMode: mocks.updateDriverNightMode,
+  hasActiveSubscription: mocks.hasActiveSubscription,
 }));
 
 import { driverRouter } from "./driver";
 
 const app = express();
+app.use(express.json());
 app.use("/api/v1/driver", driverRouter);
 
 const trip = {
@@ -83,5 +90,115 @@ describe("GET /api/v1/driver/trips/active", () => {
       name: "App Customer",
       phone: "0500000000",
     });
+  });
+});
+
+describe("PATCH /api/v1/driver/online", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it("starts a new online session with Night rides disabled", async () => {
+    mocks.findUnique.mockResolvedValue({
+      id: "driver-1",
+      userId: "driver-user-1",
+      isApproved: true,
+      isOnline: false,
+      nightMode: false,
+    });
+    mocks.hasActiveSubscription.mockReturnValue(true);
+    mocks.update.mockResolvedValue({
+      isOnline: true,
+      nightMode: false,
+    });
+
+    const response = await request(app)
+      .patch("/api/v1/driver/online")
+      .send({ isOnline: true });
+
+    expect(response.status).toBe(200);
+    expect(mocks.update).toHaveBeenCalledWith({
+      where: { id: "driver-1" },
+      data: {
+        isOnline: true,
+        nightMode: false,
+      },
+    });
+    expect(response.body.data).toMatchObject({
+      isOnline: true,
+      nightMode: false,
+    });
+  });
+
+  it("always allows going offline and resets Night rides", async () => {
+    mocks.findUnique.mockResolvedValue({
+      id: "driver-1",
+      userId: "driver-user-1",
+      isApproved: true,
+      isOnline: true,
+      nightMode: true,
+    });
+    mocks.hasActiveSubscription.mockReturnValue(false);
+    mocks.update.mockResolvedValue({
+      isOnline: false,
+      nightMode: false,
+    });
+
+    const response = await request(app)
+      .patch("/api/v1/driver/online")
+      .send({ isOnline: false });
+
+    expect(response.status).toBe(200);
+    expect(mocks.hasActiveSubscription).not.toHaveBeenCalled();
+    expect(mocks.update).toHaveBeenCalledWith({
+      where: { id: "driver-1" },
+      data: {
+        isOnline: false,
+        nightMode: false,
+      },
+    });
+    expect(response.body.data).toMatchObject({
+      isOnline: false,
+      nightMode: false,
+    });
+  });
+});
+
+describe("PATCH /api/v1/driver/night-mode", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it("rejects enabling Night rides while offline", async () => {
+    mocks.findUnique.mockResolvedValue({
+      id: "driver-1",
+      userId: "driver-user-1",
+      isOnline: false,
+    });
+
+    const response = await request(app)
+      .patch("/api/v1/driver/night-mode")
+      .send({ nightMode: true });
+
+    expect(response.status).toBe(409);
+    expect(response.body.error).toBe("Go online before enabling night rides.");
+    expect(mocks.updateDriverNightMode).not.toHaveBeenCalled();
+  });
+
+  it("allows enabling Night rides while online", async () => {
+    mocks.findUnique.mockResolvedValue({
+      id: "driver-1",
+      userId: "driver-user-1",
+      isOnline: true,
+    });
+    mocks.updateDriverNightMode.mockResolvedValue(undefined);
+
+    const response = await request(app)
+      .patch("/api/v1/driver/night-mode")
+      .send({ nightMode: true });
+
+    expect(response.status).toBe(200);
+    expect(mocks.updateDriverNightMode).toHaveBeenCalledWith("driver-1", true);
+    expect(response.body.data.nightMode).toBe(true);
   });
 });
