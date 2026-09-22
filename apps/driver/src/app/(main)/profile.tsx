@@ -56,7 +56,7 @@ export default function ProfileScreen() {
               {user?.name?.charAt(0).toUpperCase() || "?"}
             </Text>
           </View>
-          <Text style={styles.name}>{user?.name || "Rider"}</Text>
+          <Text style={styles.name}>{user?.name || "Driver"}</Text>
           <Text style={styles.phone}>{user?.phone}</Text>
           
           <View style={[styles.badge, { backgroundColor: badge.color + "20" }]}>
@@ -106,7 +106,7 @@ export default function ProfileScreen() {
           <Text style={styles.logoutText}>Logout</Text>
         </TouchableOpacity>
 
-        <Text style={styles.version}>AllGo Rider v0.1.0</Text>
+        <Text style={styles.version}>AllGo Driver v0.1.0</Text>
       </ScrollView>
     </SafeAreaView>
   );

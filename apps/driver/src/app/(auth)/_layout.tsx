@@ -14,7 +14,7 @@ export default function AuthLayout() {
       <Stack.Screen
         name="phone"
         options={{
-          title: "Rider Sign In",
+          title: "Driver Sign In",
           headerBackVisible: false,
         }}
       />
