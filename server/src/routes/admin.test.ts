@@ -9,6 +9,7 @@ const mocks = vi.hoisted(() => ({
   geocode: vi.fn(),
   tripUpdateMany: vi.fn(),
   tripFindUnique: vi.fn(),
+  tripFindMany: vi.fn(),
   driverFindMany: vi.fn(),
   driverCount: vi.fn(),
   customerCount: vi.fn(),
@@ -37,6 +38,7 @@ vi.mock("../config/database", () => ({
     trip: {
       updateMany: mocks.tripUpdateMany,
       findUnique: mocks.tripFindUnique,
+      findMany: mocks.tripFindMany,
       count: mocks.tripCount,
     },
     driver: {
@@ -99,6 +101,43 @@ const createdTrip = {
   destAddress: "Destination",
   createdAt: new Date("2026-09-04T00:00:00.000Z"),
 };
+
+describe("GET /api/v1/admin/trips", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mocks.resolveBranchFilter.mockReturnValue(undefined);
+    mocks.tripFindMany.mockResolvedValue([]);
+    mocks.tripCount.mockResolvedValue(0);
+  });
+
+  it("applies delivery type filtering before pagination", async () => {
+    const response = await request(app).get(
+      "/api/v1/admin/trips?serviceType=DELIVERY&deliveryType=OTHER"
+    );
+
+    expect(response.status).toBe(200);
+
+    expect(mocks.tripFindMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({
+          serviceType: "DELIVERY",
+          deliveryType: "OTHER",
+        }),
+        skip: 0,
+        take: 20,
+      })
+    );
+
+    expect(mocks.tripCount).toHaveBeenCalledWith({
+      where: expect.objectContaining({
+        serviceType: "DELIVERY",
+        deliveryType: "OTHER",
+      }),
+    });
+
+    expect(response.body.pagination.totalCount).toBe(0);
+  });
+});
 
 describe("POST /api/v1/admin/trips/call-in", () => {
   beforeEach(() => {

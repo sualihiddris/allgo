@@ -162,10 +162,10 @@ export function TripsPage() {
 
       {/* Mini Stats */}
       <div className="grid grid-cols-2 gap-4 md:grid-cols-4">
-        <MiniStat label="Total" value={statCounts.total} color="slate" />
-        <MiniStat label="Active" value={statCounts.active} color="orange" />
-        <MiniStat label="Completed" value={statCounts.completed} color="green" />
-        <MiniStat label="Cancelled" value={statCounts.cancelled} color="red" />
+        <MiniStat label="Matching Trips" value={statCounts.total} color="slate" />
+        <MiniStat label="Active on Page" value={statCounts.active} color="orange" />
+        <MiniStat label="Completed on Page" value={statCounts.completed} color="green" />
+        <MiniStat label="Cancelled on Page" value={statCounts.cancelled} color="red" />
       </div>
 
       {/* Filters */}
