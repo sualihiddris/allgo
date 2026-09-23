@@ -74,6 +74,7 @@ export function DeliveriesPage() {
     try {
       const params: Record<string, string> = { page: String(page), limit: '20', serviceType: 'DELIVERY' };
       if (statusFilter !== 'ALL') params.status = statusFilter;
+      if (typeFilter !== 'ALL') params.deliveryType = typeFilter;
       if (branchFilter) params.branchId = branchFilter;
 
       const token = localStorage.getItem('admin_access_token');
@@ -82,8 +83,7 @@ export function DeliveriesPage() {
         params,
       });
 
-      const trips: Delivery[] = data.trips || [];
-      setDeliveries(typeFilter === 'ALL' ? trips : trips.filter((t) => t.deliveryType === typeFilter));
+      setDeliveries(data.trips || []);
       setPagination(data.pagination || { page: 1, limit: 20, totalCount: 0, totalPages: 0 });
     } catch (err) {
       console.error('Failed to fetch deliveries:', err);
@@ -117,14 +117,14 @@ export function DeliveriesPage() {
       <div className="grid grid-cols-2 gap-4 md:grid-cols-5">
         <div className="card p-5">
           <p className="text-3xl font-bold tracking-tight text-slate-900">{pagination.totalCount}</p>
-          <p className="mt-0.5 text-sm font-medium text-slate-500">Total Deliveries</p>
+          <p className="mt-0.5 text-sm font-medium text-slate-500">Matching Deliveries</p>
         </div>
         {(['FOOD', 'GROCERIES', 'PARCELS', 'OTHER'] as const).map((type) => (
           <div key={type} className="card p-5">
             <p className="text-3xl font-bold tracking-tight text-slate-900">
               <span className="mr-1 text-2xl">{DELIVERY_ICONS[type]}</span>{typeCounts[type] || 0}
             </p>
-            <p className="mt-0.5 text-xs font-medium uppercase tracking-wide text-slate-400">{type}</p>
+            <p className="mt-0.5 text-xs font-medium uppercase tracking-wide text-slate-400">{type} on page</p>
           </div>
         ))}
       </div>
@@ -178,6 +178,7 @@ export function DeliveriesPage() {
             <span className="text-sm text-slate-400">No deliveries match your filters</span>
           </div>
         ) : (
+          <>
           <table className="table-modern">
             <thead>
               <tr>
@@ -236,6 +237,40 @@ export function DeliveriesPage() {
               })}
             </tbody>
           </table>
+
+          {pagination.totalPages > 1 && (
+            <div className="flex items-center justify-between border-t border-slate-100 px-5 py-4">
+              <p className="text-sm text-slate-500">
+                Showing {(pagination.page - 1) * pagination.limit + 1}–{Math.min(
+                  pagination.page * pagination.limit,
+                  pagination.totalCount
+                )} of {pagination.totalCount}
+              </p>
+
+              <div className="flex items-center gap-2">
+                <button
+                  disabled={pagination.page <= 1}
+                  onClick={() => fetchDeliveries(pagination.page - 1)}
+                  className="btn-secondary btn-sm"
+                >
+                  ← Prev
+                </button>
+
+                <span className="text-sm font-medium text-slate-500">
+                  Page {pagination.page} / {pagination.totalPages}
+                </span>
+
+                <button
+                  disabled={pagination.page >= pagination.totalPages}
+                  onClick={() => fetchDeliveries(pagination.page + 1)}
+                  className="btn-secondary btn-sm"
+                >
+                  Next →
+                </button>
+              </div>
+            </div>
+          )}
+          </>
         )}
       </div>
     </div>

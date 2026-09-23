@@ -1019,6 +1019,7 @@ router.get("/trips", requireAuth, requireAdmin, async (req, res) => {
     const source = req.query.source as string | undefined;
     const vehicleType = req.query.vehicleType as string | undefined;
     const serviceType = req.query.serviceType as string | undefined;
+    const deliveryType = req.query.deliveryType as string | undefined;
     const search = req.query.search as string | undefined;
     const dateFrom = req.query.dateFrom as string | undefined;
     const dateTo = req.query.dateTo as string | undefined;
@@ -1048,6 +1049,9 @@ router.get("/trips", requireAuth, requireAdmin, async (req, res) => {
     }
     if (serviceType && serviceType !== "ALL") {
       where.serviceType = serviceType;
+    }
+    if (deliveryType && deliveryType !== "ALL") {
+      where.deliveryType = deliveryType;
     }
     if (dateFrom || dateTo) {
       where.createdAt = {};
