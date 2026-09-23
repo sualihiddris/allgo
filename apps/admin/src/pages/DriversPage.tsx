@@ -72,7 +72,7 @@ export function DriversPage() {
 
   useEffect(() => {
     fetchFeedbackSummary();
-  }, []);
+  }, [branchFilter]);
 
   useEffect(() => {
     filterDrivers();
@@ -85,6 +85,7 @@ export function DriversPage() {
         headers: {
           Authorization: `Bearer ${localStorage.getItem('admin_access_token')}`,
         },
+        params: branchFilter ? { branchId: branchFilter } : {},
       });
       setFeedbackSummary(response.data.drivers || []);
     } catch (error) {
