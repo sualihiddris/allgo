@@ -32,6 +32,7 @@ export function BranchesPage() {
   const [branches, setBranches] = useState<Branch[]>([]);
   const [admins, setAdmins] = useState<BranchAdmin[]>([]);
   const [isLoading, setIsLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
 
   const [newBranchName, setNewBranchName] = useState('');
   const [newBranchRegion, setNewBranchRegion] = useState('');
@@ -44,6 +45,7 @@ export function BranchesPage() {
 
   const fetchAll = useCallback(async () => {
     setIsLoading(true);
+    setLoadError(null);
     try {
       const [branchesRes, adminsRes] = await Promise.all([
         axios.get(`${API_BASE_URL}/admin/branches`, { headers: authHeader() }),
@@ -53,6 +55,7 @@ export function BranchesPage() {
       setAdmins(adminsRes.data.admins || []);
     } catch (err) {
       console.error('Failed to fetch branch data:', err);
+      setLoadError('Unable to load branch data. Check the connection and try again.');
     } finally {
       setIsLoading(false);
     }
@@ -110,8 +113,17 @@ export function BranchesPage() {
     <div className="space-y-6">
       <div>
         <h1 className="text-2xl font-bold text-slate-900">Branches</h1>
-        <p className="mt-1 text-sm text-slate-500">Manage branches and branch admin accounts (Section 4B)</p>
+        <p className="mt-1 text-sm text-slate-500">Manage branches and branch admin accounts</p>
       </div>
+
+      {loadError && (
+        <div className="flex items-center justify-between gap-4 rounded-xl border border-red-200 bg-red-50 px-4 py-3">
+          <p className="text-sm font-medium text-red-700">{loadError}</p>
+          <button onClick={fetchAll} className="btn-secondary btn-sm shrink-0">
+            Try again
+          </button>
+        </div>
+      )}
 
       {/* Branches */}
       <div className="card p-6">
@@ -136,6 +148,10 @@ export function BranchesPage() {
 
         {isLoading ? (
           <p className="py-4 text-sm text-slate-400">Loading…</p>
+        ) : loadError && branches.length === 0 ? (
+          <p className="py-8 text-center text-sm text-slate-400">Branch data unavailable</p>
+        ) : branches.length === 0 ? (
+          <p className="py-8 text-center text-sm text-slate-400">No branches yet</p>
         ) : (
           <table className="table-modern">
             <thead>
@@ -193,6 +209,8 @@ export function BranchesPage() {
 
         {isLoading ? (
           <p className="py-4 text-sm text-slate-400">Loading…</p>
+        ) : loadError && admins.length === 0 ? (
+          <p className="py-8 text-center text-sm text-slate-400">Branch admin data unavailable</p>
         ) : admins.length === 0 ? (
           <p className="py-8 text-center text-sm text-slate-400">No branch admins yet</p>
         ) : (

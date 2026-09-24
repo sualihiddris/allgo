@@ -12,6 +12,7 @@ export function SettingsPage() {
   const { user } = useAuthStore();
   const [is2faEnabled, setIs2faEnabled] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
+  const [statusError, setStatusError] = useState('');
   const [setupData, setSetupData] = useState<{ secret: string; qrCode: string } | null>(null);
   const [code, setCode] = useState('');
   const [error, setError] = useState('');
@@ -23,11 +24,13 @@ export function SettingsPage() {
 
   const fetchStatus = async () => {
     setIsLoading(true);
+    setStatusError('');
     try {
       const status = await adminAuthService.get2faStatus();
       setIs2faEnabled(status.enabled);
     } catch (error) {
       console.error('Failed to fetch 2FA status:', error);
+      setStatusError('Unable to load two-factor authentication status.');
     } finally {
       setIsLoading(false);
     }
@@ -107,6 +110,13 @@ export function SettingsPage() {
 
         {isLoading ? (
           <p className="text-sm text-slate-400">Loading…</p>
+        ) : statusError ? (
+          <div className="flex items-center justify-between gap-4">
+            <p className="text-sm font-medium text-red-600">{statusError}</p>
+            <button onClick={fetchStatus} className="btn-secondary shrink-0">
+              Try again
+            </button>
+          </div>
         ) : is2faEnabled ? (
           <div className="flex items-center justify-between">
             <span className="badge-green"><span className="badge-dot bg-green-500" /> Enabled</span>
