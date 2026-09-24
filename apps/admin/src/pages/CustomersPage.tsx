@@ -23,9 +23,11 @@ export function CustomersPage() {
   const [searchQuery, setSearchQuery] = useState('');
   const [branchFilter, setBranchFilter] = useState('');
   const [isLoading, setIsLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
 
   const fetchCustomers = useCallback(async () => {
     setIsLoading(true);
+    setLoadError(null);
     try {
       const response = await axios.get(`${API_BASE_URL}/admin/customers`, {
         headers: {
@@ -36,6 +38,7 @@ export function CustomersPage() {
       setCustomers(response.data.customers || []);
     } catch (error) {
       console.error('Failed to fetch customers:', error);
+      setLoadError('Unable to load customers. Check the connection and try again.');
     } finally {
       setIsLoading(false);
     }
@@ -72,12 +75,14 @@ export function CustomersPage() {
 
       <div className="grid grid-cols-2 gap-4">
         <div className="card p-5">
-          <p className="text-3xl font-bold tracking-tight text-slate-900">{customers.length}</p>
+          <p className="text-3xl font-bold tracking-tight text-slate-900">
+            {loadError ? '—' : customers.length}
+          </p>
           <p className="mt-0.5 text-sm font-medium text-slate-500">Total Customers</p>
         </div>
         <div className="card p-5">
           <p className="text-3xl font-bold tracking-tight text-primary-600">
-            {customers.reduce((sum, c) => sum + c.totalTrips, 0)}
+            {loadError ? '—' : customers.reduce((sum, c) => sum + c.totalTrips, 0)}
           </p>
           <p className="mt-0.5 text-sm font-medium text-slate-500">Total Trips Booked</p>
         </div>
@@ -88,6 +93,13 @@ export function CustomersPage() {
           <div className="flex flex-col items-center gap-3 py-16 text-slate-400">
             <div className="h-7 w-7 animate-spin rounded-full border-2 border-slate-200 border-t-primary-500" />
             <span className="text-sm font-medium">Loading customers…</span>
+          </div>
+        ) : loadError ? (
+          <div className="flex flex-col items-center gap-3 py-16 text-center">
+            <p className="text-sm font-medium text-red-600">{loadError}</p>
+            <button onClick={fetchCustomers} className="btn-secondary btn-sm">
+              Try again
+            </button>
           </div>
         ) : (
           <table className="table-modern">

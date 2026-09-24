@@ -41,6 +41,7 @@ export function AuditLogPage() {
   const [logs, setLogs] = useState<LogEntry[]>([]);
   const [admins, setAdmins] = useState<BranchAdminOption[]>([]);
   const [isLoading, setIsLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [actionFilter, setActionFilter] = useState('');
   const [adminFilter, setAdminFilter] = useState(searchParams.get('adminUserId') || '');
   const [page, setPage] = useState(1);
@@ -57,6 +58,7 @@ export function AuditLogPage() {
 
   const fetchLogs = useCallback(async (p = 1) => {
     setIsLoading(true);
+    setLoadError(null);
     try {
       const params: Record<string, string> = { page: String(p), limit: '20' };
       if (actionFilter) params.action = actionFilter;
@@ -71,6 +73,7 @@ export function AuditLogPage() {
       setPage(p);
     } catch (err) {
       console.error('Failed to fetch audit log:', err);
+      setLoadError('Unable to load the audit log. Check the connection and try again.');
     } finally {
       setIsLoading(false);
     }
@@ -132,6 +135,13 @@ export function AuditLogPage() {
           <div className="flex flex-col items-center gap-3 py-16 text-slate-400">
             <div className="h-7 w-7 animate-spin rounded-full border-2 border-slate-200 border-t-primary-500" />
             <span className="text-sm font-medium">Loading audit log…</span>
+          </div>
+        ) : loadError ? (
+          <div className="flex flex-col items-center gap-3 py-16 text-center">
+            <p className="text-sm font-medium text-red-600">{loadError}</p>
+            <button onClick={() => fetchLogs(page)} className="btn-secondary btn-sm">
+              Try again
+            </button>
           </div>
         ) : logs.length === 0 ? (
           <div className="py-16 text-center">

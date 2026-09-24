@@ -33,6 +33,7 @@ interface DriverSubscription {
 export function SubscriptionsPage() {
   const [drivers, setDrivers] = useState<DriverSubscription[]>([]);
   const [isLoading, setIsLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [filter, setFilter] = useState<'ALL' | 'ACTIVE' | 'EXPIRED' | 'PENDING'>('ALL');
   const [branchFilter, setBranchFilter] = useState('');
   const [processingId, setProcessingId] = useState<string | null>(null);
@@ -43,6 +44,7 @@ export function SubscriptionsPage() {
 
   const fetchSubscriptions = useCallback(async () => {
     setIsLoading(true);
+    setLoadError(null);
     try {
       const { data } = await axios.get(`${API_BASE_URL}/admin/subscriptions`, {
         headers: authHeader(),
@@ -51,6 +53,7 @@ export function SubscriptionsPage() {
       setDrivers(data.drivers || []);
     } catch (err) {
       console.error('Failed to fetch subscriptions:', err);
+      setLoadError('Unable to load subscriptions. Check the connection and try again.');
     } finally {
       setIsLoading(false);
     }
@@ -112,7 +115,7 @@ export function SubscriptionsPage() {
       <div className="flex flex-wrap items-end justify-between gap-4">
         <div>
           <h1 className="text-2xl font-bold text-slate-900">Subscriptions</h1>
-          <p className="mt-1 text-sm text-slate-500">Manual subscription verification (Section 4A)</p>
+          <p className="mt-1 text-sm text-slate-500">Review driver subscription status and payment proofs</p>
         </div>
         <div className="flex gap-2">
           <BranchFilterSelect value={branchFilter} onChange={setBranchFilter} />
@@ -131,15 +134,21 @@ export function SubscriptionsPage() {
 
       <div className="grid grid-cols-3 gap-4">
         <div className="card p-5">
-          <p className="text-3xl font-bold tracking-tight text-green-600">{stats.active}</p>
+          <p className="text-3xl font-bold tracking-tight text-green-600">
+            {loadError ? '—' : stats.active}
+          </p>
           <p className="mt-0.5 text-sm font-medium text-slate-500">Active</p>
         </div>
         <div className="card p-5">
-          <p className="text-3xl font-bold tracking-tight text-red-600">{stats.expired}</p>
+          <p className="text-3xl font-bold tracking-tight text-red-600">
+            {loadError ? '—' : stats.expired}
+          </p>
           <p className="mt-0.5 text-sm font-medium text-slate-500">Expired</p>
         </div>
         <div className="card p-5">
-          <p className="text-3xl font-bold tracking-tight text-amber-600">{stats.pending}</p>
+          <p className="text-3xl font-bold tracking-tight text-amber-600">
+            {loadError ? '—' : stats.pending}
+          </p>
           <p className="mt-0.5 text-sm font-medium text-slate-500">Pending Proof Review</p>
         </div>
       </div>
@@ -149,6 +158,13 @@ export function SubscriptionsPage() {
           <div className="flex flex-col items-center gap-3 py-16 text-slate-400">
             <div className="h-7 w-7 animate-spin rounded-full border-2 border-slate-200 border-t-primary-500" />
             <span className="text-sm font-medium">Loading subscriptions…</span>
+          </div>
+        ) : loadError ? (
+          <div className="flex flex-col items-center gap-3 py-16 text-center">
+            <p className="text-sm font-medium text-red-600">{loadError}</p>
+            <button onClick={fetchSubscriptions} className="btn-secondary btn-sm">
+              Try again
+            </button>
           </div>
         ) : filtered.length === 0 ? (
           <div className="py-16 text-center">
