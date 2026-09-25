@@ -20,6 +20,7 @@ export default function LocationSearchScreen() {
   const [suggestions, setSuggestions] = useState<PlaceSuggestion[]>([]);
   const [isSearching, setIsSearching] = useState(false);
   const [hasSearched, setHasSearched] = useState(false);
+  const [searchError, setSearchError] = useState<string | null>(null);
   const [resolutionError, setResolutionError] = useState<string | null>(null);
   const [resolvingPlaceId, setResolvingPlaceId] = useState<string | null>(null);
   const requestSequence = useRef(0);
@@ -32,6 +33,7 @@ export default function LocationSearchScreen() {
   useEffect(() => {
     const query = search.trim();
     const sequence = ++requestSequence.current;
+    setSearchError(null);
     if (query.length < 2) {
       setSuggestions([]);
       setIsSearching(false);
@@ -44,16 +46,19 @@ export default function LocationSearchScreen() {
       setIsSearching(true);
       try {
         const results = await searchPlaces(query, pickup ?? undefined);
-        if (sequence === requestSequence.current) setSuggestions(results);
+        if (sequence === requestSequence.current) {
+          setSuggestions(results);
+          setHasSearched(true);
+        }
       } catch (error) {
         if (sequence === requestSequence.current) {
           console.error("Failed to search places:", error);
           setSuggestions([]);
+          setSearchError("Place search is unavailable. Please try again.");
         }
       } finally {
         if (sequence === requestSequence.current) {
           setIsSearching(false);
-          setHasSearched(true);
         }
       }
     }, 350);
@@ -107,6 +112,7 @@ export default function LocationSearchScreen() {
       {!isSearching && hasSearched && suggestions.length === 0 && (
         <Text style={styles.emptyState}>No places found</Text>
       )}
+      {searchError && <Text style={styles.errorState}>{searchError}</Text>}
       {resolutionError && <Text style={styles.errorState}>{resolutionError}</Text>}
       <FlatList
         data={suggestions}
