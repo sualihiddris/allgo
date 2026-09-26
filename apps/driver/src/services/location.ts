@@ -28,6 +28,10 @@ class LocationService {
   private updateInterval = 5000; // Send updates every 5 seconds
   private minDistanceMeters = 10; // Only send if moved > 10 meters
   private heartbeatInterval = 30000;
+  private trackingGeneration = 0;
+  private pendingStart: Promise<boolean> | null = null;
+  private refreshing = false;
+  private pendingLocation: Promise<LocationData | null> | null = null;
 
   private getDevelopmentTestLocation(): LocationData | null {
     if (!__DEV__ || Platform.OS !== "web") return null;
@@ -57,13 +61,28 @@ class LocationService {
     if (this.trackingHeartbeat) return;
 
     this.trackingHeartbeat = setInterval(() => {
-      if (!this.isTracking || !this.lastSentLocation) return;
-
-      this.sendLocationUpdate({
-        ...this.lastSentLocation,
-        timestamp: Date.now(),
-      });
+      if (this.isTracking) void this.refreshLocation();
     }, this.heartbeatInterval);
+  }
+
+  // A heartbeat must sample GPS, not make old coordinates look newly observed.
+  async refreshLocation(): Promise<void> {
+    if (this.refreshing) return;
+    this.refreshing = true;
+    const generation = this.trackingGeneration;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    try {
+      const location = await Promise.race([
+        this.getCurrentLocation(),
+        new Promise<null>((resolve) => { timer = setTimeout(() => resolve(null), 10000); }),
+      ]);
+      if (generation !== this.trackingGeneration) return;
+      if (location) this.sendLocationUpdate(location);
+      else socketService.invalidatePresence();
+    } finally {
+      if (timer) clearTimeout(timer);
+      this.refreshing = false;
+    }
   }
 
   /**
@@ -103,6 +122,16 @@ class LocationService {
       return testLocation;
     }
 
+    // Expo's native GPS request cannot be aborted. Reuse an outstanding request
+    // rather than accumulating native requests if location services stall.
+    if (this.pendingLocation) return this.pendingLocation;
+    const request = this.readCurrentLocation();
+    this.pendingLocation = request;
+    try { return await request; }
+    finally { if (this.pendingLocation === request) this.pendingLocation = null; }
+  }
+
+  private async readCurrentLocation(): Promise<LocationData | null> {
     try {
       const hasPermission = await this.requestPermissions();
       if (!hasPermission) return null;
@@ -129,6 +158,18 @@ class LocationService {
    * Start watching location and sending updates
    */
   async startTracking(): Promise<boolean> {
+    if (this.pendingStart) return this.pendingStart;
+    const start = this.startTrackingInternal();
+    this.pendingStart = start;
+    try {
+      return await start;
+    } finally {
+      if (this.pendingStart === start) this.pendingStart = null;
+    }
+  }
+
+  private async startTrackingInternal(): Promise<boolean> {
+    const generation = this.trackingGeneration;
     if (this.isTracking) {
       console.log("Already tracking location");
       return true;
@@ -145,16 +186,21 @@ class LocationService {
     }
 
     const hasPermission = await this.requestPermissions();
-    if (!hasPermission) return false;
+    if (generation !== this.trackingGeneration) return false;
+    if (!hasPermission) {
+      socketService.invalidatePresence();
+      return false;
+    }
 
     try {
-      this.watchId = await Location.watchPositionAsync(
+      const watch = await Location.watchPositionAsync(
         {
           accuracy: Location.Accuracy.High,
           timeInterval: this.updateInterval,
           distanceInterval: this.minDistanceMeters,
         },
         (location) => {
+          if (generation !== this.trackingGeneration) return;
           const locationData: LocationData = {
             lat: location.coords.latitude,
             lng: location.coords.longitude,
@@ -168,11 +214,19 @@ class LocationService {
         }
       );
 
+      if (generation !== this.trackingGeneration) {
+        watch.remove();
+        return false;
+      }
+      this.watchId = watch;
+
       this.isTracking = true;
       this.startTrackingHeartbeat();
+      void this.refreshLocation();
       console.log("✅ Location tracking started");
       return true;
     } catch (error) {
+      if (generation === this.trackingGeneration) socketService.invalidatePresence();
       console.error("Error starting location tracking:", error);
       return false;
     }
@@ -182,6 +236,9 @@ class LocationService {
    * Stop watching location
    */
   stopTracking(): void {
+    this.trackingGeneration++;
+    this.pendingStart = null;
+    socketService.invalidatePresence();
     if (this.trackingHeartbeat) {
       clearInterval(this.trackingHeartbeat);
       this.trackingHeartbeat = null;
@@ -200,6 +257,10 @@ class LocationService {
    * Send location update to server
    */
   private sendLocationUpdate(location: LocationData): void {
+    if (!Number.isFinite(location.timestamp) || Date.now() - location.timestamp > 60000 || location.timestamp > Date.now() + 30000) {
+      socketService.invalidatePresence();
+      return;
+    }
     // Throttle updates - don't send if too close to last update
     if (this.lastSentLocation) {
       const distance = this.calculateDistance(
@@ -218,12 +279,14 @@ class LocationService {
     }
 
     // Send via socket
-    socketService.sendLocation({
+    const sent = socketService.sendLocation({
       lat: location.lat,
       lng: location.lng,
       heading: location.heading,
       speed: location.speed,
-    });
+    }, location.timestamp);
+
+    if (!sent) return;
 
     this.lastSentLocation = location;
     console.log(`📍 Location sent: ${location.lat.toFixed(6)}, ${location.lng.toFixed(6)}`);
