@@ -329,12 +329,21 @@ export async function setupSocketIO(httpServer: HTTPServer): Promise<Server> {
     /**
      * Driver updates their location
      */
-    socket.on("driver:location", async (data: { lat: number; lng: number; heading?: number; speed?: number }) => {
-      if (socket.role !== "DRIVER") return;
-      await socket.driverRoomReady;
-      if (!socket.driverId) return;
-
+    socket.on("driver:location", async (
+      data: { lat: number; lng: number; heading?: number; speed?: number },
+      acknowledge?: (result: { success: boolean; readyForDispatch?: boolean }) => void
+    ) => {
+      if (typeof acknowledge !== "function") acknowledge = undefined;
       try {
+        if (socket.role !== "DRIVER") {
+          acknowledge?.({ success: false });
+          return;
+        }
+        await socket.driverRoomReady;
+        if (!socket.driverId) {
+          acknowledge?.({ success: false });
+          return;
+        }
         await updateDriverLocation(socket.driverId!, data.lat, data.lng);
 
         // Broadcast to customers tracking this driver directly
@@ -358,8 +367,23 @@ export async function setupSocketIO(httpServer: HTTPServer): Promise<Server> {
           });
         }
 
+        // Optional, backwards-compatible evidence for the Driver UI. This does
+        // not change candidate selection or promise an offer for any given trip.
+        if (acknowledge) {
+          let readyForDispatch = await isDriverAvailable(socket.driverId);
+          if (readyForDispatch && isNightServiceHours()) {
+            const driver = await prisma.driver.findUnique({
+              where: { id: socket.driverId },
+              select: { nightMode: true, vehicleType: true },
+            });
+            readyForDispatch = !!driver?.nightMode && isVehicleAllowedAtNight(driver.vehicleType);
+          }
+          acknowledge({ success: true, readyForDispatch });
+        }
+
         console.log(`📍 Driver ${socket.driverId} location: ${data.lat.toFixed(5)}, ${data.lng.toFixed(5)}`);
       } catch (error) {
+        acknowledge?.({ success: false });
         console.error("Error updating driver location:", error);
       }
     });

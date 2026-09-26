@@ -62,6 +62,33 @@ export interface DriverProfile extends Driver {
 
 class DriverAuthService {
   private accessToken: string | null = null;
+  private pendingRefresh: Promise<boolean> | null = null;
+
+  private async fetchWithTimeout(url: string, options: RequestInit = {}): Promise<Response> {
+    const controller = new AbortController();
+    let abort!: () => void;
+    const deadline = new Promise<never>((_, reject) => {
+      abort = () => { controller.abort(); reject(new Error("Request timed out or cancelled")); };
+    });
+    const timer = setTimeout(() => abort(), 15000);
+    options.signal?.addEventListener("abort", abort);
+    try {
+      if (options.signal?.aborted) { abort(); return await deadline; }
+      return await Promise.race([
+        (async () => {
+          const response = await fetch(url, { ...options, signal: controller.signal });
+          // These endpoints return finite JSON. Include the complete body in
+          // the deadline while preserving the Response API for existing callers.
+          await response.clone().arrayBuffer();
+          return response;
+        })(),
+        deadline,
+      ]);
+    } finally {
+      clearTimeout(timer);
+      options.signal?.removeEventListener("abort", abort);
+    }
+  }
 
   async init(): Promise<boolean> {
     try {
@@ -105,18 +132,30 @@ class DriverAuthService {
   }
 
   async refreshTokens(): Promise<boolean> {
+    if (this.pendingRefresh) return this.pendingRefresh;
+    const refresh = this.performRefresh();
+    this.pendingRefresh = refresh;
+    try {
+      return await refresh;
+    } finally {
+      if (this.pendingRefresh === refresh) this.pendingRefresh = null;
+    }
+  }
+
+  private async performRefresh(): Promise<boolean> {
     try {
       const refreshToken = await storage.getItem(REFRESH_TOKEN_KEY);
       if (!refreshToken) return false;
 
-      const response = await fetch(`${API_BASE_URL}/auth/refresh`, {
+      const response = await this.fetchWithTimeout(`${API_BASE_URL}/auth/refresh`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ refreshToken }),
       });
 
       if (!response.ok) {
-        await this.clearTokens();
+        // An outage is not evidence that the driver's credentials are invalid.
+        if (response.status === 401 || response.status === 403) await this.clearTokens();
         return false;
       }
 
@@ -215,7 +254,7 @@ class DriverAuthService {
       if (!hasToken) throw new Error("Not authenticated");
     }
 
-    const response = await fetch(url, {
+    const response = await this.fetchWithTimeout(url, {
       ...options,
       headers: {
         "Content-Type": "application/json",
@@ -227,7 +266,7 @@ class DriverAuthService {
     if (response.status === 401) {
       const refreshed = await this.refreshTokens();
       if (refreshed) {
-        return fetch(url, {
+        return this.fetchWithTimeout(url, {
           ...options,
           headers: {
             "Content-Type": "application/json",

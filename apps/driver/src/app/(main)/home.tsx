@@ -29,6 +29,7 @@ import socketService from "../../services/socket";
 import locationService from "../../services/location";
 import tripService from "../../services/trip";
 import JobOfferModal from "../../components/JobOfferModal";
+import { useConnectionStore } from "../../store/connectionStore";
 
 import { isNightServiceHours } from "@allgo/shared/constants/nightService";
 
@@ -56,6 +57,7 @@ export default function HomeScreen() {
     toggleOnline,
     toggleNightMode,
   } = useDriverStore();
+  const { connected, presence, authentication } = useConnectionStore();
 
   // nightMode is an operational preference, not an appearance preference.
   const theme = getDriverTheme(false);
@@ -158,10 +160,6 @@ export default function HomeScreen() {
             data.reason || "The customer cancelled this trip."
           );
         });
-
-        if (!cancelled) {
-          await locationService.startTracking();
-        }
       } catch (error) {
         if (!cancelled) {
           console.error("Failed to connect socket:", error);
@@ -181,6 +179,24 @@ export default function HomeScreen() {
       socketService.disconnect();
     };
   }, [isOnline]);
+
+  useEffect(() => {
+    if (!isOnline || !connected) return;
+    // Retry denied/unavailable location on recovery without changing online intent.
+    let cancelled = false;
+    let retryNeeded = !locationService.isCurrentlyTracking();
+    const ensureTracking = async () => {
+      if (cancelled || !retryNeeded) return;
+      retryNeeded = !(await locationService.startTracking());
+    };
+    if (!retryNeeded) void locationService.refreshLocation();
+    else void ensureTracking();
+    const retry = setInterval(ensureTracking, 30000);
+    return () => {
+      cancelled = true;
+      clearInterval(retry);
+    };
+  }, [isOnline, connected]);
 
   useEffect(() => {
     if (activeJob) {
@@ -285,6 +301,25 @@ export default function HomeScreen() {
     !isUpdatingOnline &&
     (isOnline || (isApproved && isSubscriptionActive));
 
+  const readyForRides = isOnline && connected && authentication === "authenticated" && presence === "ready" &&
+    !isUpdatingOnline && !activeJob && (!isNightTime || nightMode);
+  const statusLabel = !isOnline ? "OFFLINE"
+    : isUpdatingOnline ? "UPDATING"
+    : authentication === "required" ? "SIGN IN REQUIRED"
+    : readyForRides ? "ONLINE"
+    : !connected ? "RECONNECTING" : "NOT READY";
+  const workTitle = readyForRides ? "Waiting for a ride request"
+    : authentication === "required" ? "Sign in again to receive rides"
+    : !connected ? "Reconnecting to AllGo" : "Ride availability not confirmed";
+  const workDescription = !isOnline ? "You're not receiving ride requests."
+    : isUpdatingOnline ? "Confirming your requested status with AllGo."
+    : authentication === "required" ? "Your session could not be verified. Please sign in again."
+    : readyForRides ? "We'll notify you when a nearby request arrives."
+    : !connected ? "Your online preference is kept. We'll retry automatically."
+    : presence === "ineligible" || (isNightTime && !nightMode)
+      ? "You're not available for new rides. Check your work settings and account status."
+      : "Checking your connection and location. We'll retry automatically.";
+
   return (
     <SafeAreaView style={styles.container}>
       <ScrollView
@@ -344,7 +379,7 @@ export default function HomeScreen() {
             <View
               style={[
                 styles.statusIndicator,
-                isOnline
+                readyForRides
                   ? styles.statusIndicatorOnline
                   : styles.statusIndicatorOffline,
               ]}
@@ -352,23 +387,21 @@ export default function HomeScreen() {
             <Text
               style={[
                 styles.statusText,
-                isOnline && styles.statusTextOnline,
+                readyForRides && styles.statusTextOnline,
               ]}
             >
-              {isOnline ? "ONLINE" : "OFFLINE"}
+              {statusLabel}
             </Text>
           </View>
 
           {isOnline && (
             <Text style={styles.workTitle}>
-              Waiting for a ride request
+              {workTitle}
             </Text>
           )}
 
           <Text style={styles.workDescription}>
-            {isOnline
-              ? "We'll notify you when a nearby request arrives."
-              : "You're not receiving ride requests."}
+            {workDescription}
           </Text>
 
           <TouchableOpacity
@@ -402,7 +435,7 @@ export default function HomeScreen() {
             <View style={styles.nightInfo}>
               <View style={styles.nightTitleRow}>
                 <Text style={styles.nightTitle}>Night rides</Text>
-                {isOnline && nightMode && isNightTime && (
+                {readyForRides && nightMode && isNightTime && (
                   <Text style={styles.nightActiveText}>Active now</Text>
                 )}
               </View>
