@@ -13,7 +13,7 @@
   },
   "dependencies": {
     "@allgo/shared": "file:../../shared",
-    "@tanstack/react-query": "^5.28.0",
+    "@tanstack/react-query": "^5.96.2",
     "axios": "^1.18.1",
     "react": "18.2.0",
     "react-dom": "18.2.0",
