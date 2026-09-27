@@ -252,8 +252,27 @@ class SocketService {
     this.emit("trip:accept", { tripId, offerId });
   }
 
-  declineTrip(tripId: string, offerId: string) {
-    this.emit("trip:decline", { tripId, offerId });
+  declineTrip(tripId: string, offerId: string): Promise<boolean> {
+    const socket = this.socket;
+    if (!socket?.connected) return Promise.resolve(false);
+    return new Promise((resolve) => {
+      const finish = (received: boolean) => {
+        clearTimeout(timer);
+        socket.off("trip:decline:received", receivedReply);
+        socket.off("trip:decline:failed", failedReply);
+        socket.off("disconnect", disconnected);
+        resolve(received);
+      };
+      const matches = (data: any) => data?.tripId === tripId && data?.offerId === offerId;
+      const receivedReply = (data: any) => { if (matches(data)) finish(true); };
+      const failedReply = (data: any) => { if (matches(data)) finish(false); };
+      const disconnected = () => finish(false);
+      const timer = setTimeout(() => finish(false), 5000);
+      socket.on("trip:decline:received", receivedReply);
+      socket.on("trip:decline:failed", failedReply);
+      socket.on("disconnect", disconnected);
+      socket.emit("trip:decline", { tripId, offerId });
+    });
   }
 
   onTripOffer(callback: (offer: any) => void): () => void {

@@ -9,7 +9,7 @@
  * 5. ARRIVED/STARTED/COMPLETED: Show trip progress
  */
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   View,
   Text,
@@ -46,6 +46,70 @@ export default function TripTrackingScreen() {
   const [tripState, setTripState] = useState<TripState>("SEARCHING");
   const [driver, setDriver] = useState<TripAcceptedData["driver"] | null>(null);
   const [driverLocation, setDriverLocation] = useState<DriverLocation | null>(null);
+  const reconcileTrip = useRef<() => Promise<void>>(async () => {});
+  const revision = useRef(0);
+
+  useEffect(() => {
+    const tripId = currentTrip?.id;
+    if (!tripId) return;
+    let cancelled = false;
+    let reading = false;
+    let controller: AbortController | undefined;
+    let cancelRead: (() => void) | undefined;
+    let lastDispatchCheck = Date.now();
+    const reconcile = async () => {
+      if (cancelled || reading) return;
+      reading = true;
+      const startedRevision = revision.current;
+      controller = new AbortController();
+      const requestController = controller;
+      let timeout: ReturnType<typeof setTimeout> | undefined;
+      try {
+        const snapshot = await Promise.race([
+          bookingService.getTrip(tripId, requestController.signal),
+          new Promise<never>((_, reject) => {
+            cancelRead = () => { requestController.abort(); reject(new Error("Trip refresh cancelled or timed out")); };
+            timeout = setTimeout(cancelRead, 15000);
+          }),
+        ]);
+        const latest = useBookingStore.getState().currentTrip;
+        if (cancelled || startedRevision !== revision.current || snapshot?.id !== tripId || latest?.id !== tripId) return;
+        // A delayed SEARCHING read must never undo a confirmed assignment.
+        if (snapshot.status === "REQUESTED" && latest.status !== "REQUESTED") return;
+        setCurrentTrip({ ...latest, status: snapshot.status, dispatchStatus: snapshot.dispatchStatus });
+        if (snapshot.status === "REQUESTED") {
+          setTripState(snapshot.dispatchStatus === "NO_DRIVER_FOUND" ? "NO_DRIVER_FOUND"
+            : snapshot.dispatchStatus === "FAILED" ? "FAILED" : "SEARCHING");
+          // Reattach/reclaim only an unfinished search. A live owner rejects the
+          // claim; after a process crash the existing database lease permits recovery.
+          if ((snapshot.dispatchStatus === "SEARCHING" || snapshot.dispatchStatus == null) && Date.now() - lastDispatchCheck >= 30000) {
+            lastDispatchCheck = Date.now();
+            socketService.dispatchTrip(tripId);
+          }
+        } else if (snapshot.status === "ACCEPTED" && snapshot.driver) {
+          setDriver({ id: snapshot.driver.id, name: snapshot.driver.user?.name || "Driver",
+            phone: snapshot.driver.user?.phone || "", vehicleType: snapshot.driver.vehicleType,
+            licensePlate: snapshot.driver.licensePlate });
+          setTripState("ACCEPTED");
+          socketService.startTracking(tripId);
+        } else {
+          handleTripStatus({ tripId, status: snapshot.status });
+        }
+      } catch {
+        // A failed read is not a durable dispatch failure. Retry the read.
+      } finally {
+        if (timeout) clearTimeout(timeout);
+        cancelRead = undefined;
+        reading = false;
+      }
+    };
+    reconcileTrip.current = reconcile;
+    if (isRecoveredRequestedTrip) void reconcile();
+    const poll = setInterval(() => {
+      if (useBookingStore.getState().currentTrip?.status === "REQUESTED") void reconcile();
+    }, 5000);
+    return () => { cancelled = true; cancelRead?.(); clearInterval(poll); };
+  }, [currentTrip?.id]);
 
 
   useEffect(() => {
@@ -115,36 +179,17 @@ export default function TripTrackingScreen() {
   };
 
   const handleTripAccepted = (data: TripAcceptedData) => {
-    console.log("Trip accepted by driver:", data);
-    
-    setDriver(data.driver);
-    setTripState("ACCEPTED");
-    if (currentTrip) {
-      setCurrentTrip({ ...currentTrip, status: "ACCEPTED", dispatchStatus: null });
-    }
-    
-    // Start tracking driver location
-    if (currentTrip?.id) {
-      socketService.startTracking(currentTrip.id);
-    }
+    if (data.tripId === currentTrip?.id) void reconcileTrip.current();
   };
 
   const handleNoDrivers = (data: { tripId: string; message?: string }) => {
     if (data.tripId !== currentTrip?.id) return;
-    console.log("No drivers found");
-    setTripState("NO_DRIVER_FOUND");
-    if (currentTrip) {
-      setCurrentTrip({ ...currentTrip, dispatchStatus: "NO_DRIVER_FOUND" });
-    }
+    void reconcileTrip.current();
   };
 
   const handleTripFailed = (data: { tripId: string; reason: string }) => {
     if (data.tripId !== currentTrip?.id) return;
-    console.log("Trip dispatch failed");
-    setTripState("FAILED");
-    if (currentTrip) {
-      setCurrentTrip({ ...currentTrip, dispatchStatus: "FAILED" });
-    }
+    void reconcileTrip.current();
   };
 
   const handleTripStatus = (data: { tripId: string; status: string }) => {
@@ -161,6 +206,7 @@ export default function TripTrackingScreen() {
     
     const newState = statusMap[data.status];
     if (newState) {
+      revision.current++;
       setTripState(newState);
       if (currentTrip) {
         setCurrentTrip({
@@ -223,6 +269,7 @@ export default function TripTrackingScreen() {
   };
 
   const handleRetrySearch = () => {
+    revision.current++;
     setTripState("SEARCHING");
     if (currentTrip?.id) {
       setCurrentTrip({ ...currentTrip, dispatchStatus: "SEARCHING" });

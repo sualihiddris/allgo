@@ -5,6 +5,7 @@ const { act, create } = require("react-test-renderer");
 const mocks = vi.hoisted(() => ({
   connect: vi.fn(), startTracking: vi.fn(), refreshLocation: vi.fn(),
   setOnline: vi.fn(), getMe: vi.fn(),
+  decline: vi.fn(), handlers: {} as Record<string, (data: any) => void>,
 }));
 vi.mock("react-native", () => ({
   View: "View", Text: "Text", ScrollView: "ScrollView", Switch: "Switch",
@@ -17,7 +18,9 @@ vi.mock("../services/auth", () => ({ driverAuthService: { init: async () => true
 vi.mock("../services/driver", () => ({ driverApiService: { setOnline: mocks.setOnline } }));
 vi.mock("../services/socket", () => ({ default: {
   connect: mocks.connect, disconnect: vi.fn(),
-  onTripOffer: () => vi.fn(), onTripConfirmed: () => vi.fn(),
+  on: (event: string, handler: any) => { mocks.handlers[event] = handler; }, off: vi.fn(),
+  declineTrip: mocks.decline,
+  onTripOffer: (handler: any) => { mocks.handlers.offer = handler; return vi.fn(); }, onTripConfirmed: () => vi.fn(),
   onTripAcceptFailed: () => vi.fn(), onTripCancelled: () => vi.fn(),
 } }));
 vi.mock("../services/location", () => ({ default: {
@@ -25,10 +28,11 @@ vi.mock("../services/location", () => ({ default: {
   isCurrentlyTracking: () => false, refreshLocation: mocks.refreshLocation,
 } }));
 vi.mock("../services/trip", () => ({ default: { getActiveTrips: async () => [] } }));
-vi.mock("../components/JobOfferModal", () => ({ default: () => null }));
+vi.mock("../components/JobOfferModal", () => ({ default: (props: any) => React.createElement("Offer", props) }));
 import HomeScreen from "../app/(main)/home";
 import { useDriverStore } from "../store/driverStore";
 import { useConnectionStore } from "../store/connectionStore";
+import { useJobStore } from "../store/jobStore";
 
 describe("Driver Home truthfulness", () => {
   let screen: any;
@@ -44,10 +48,51 @@ describe("Driver Home truthfulness", () => {
     mocks.connect.mockResolvedValue({});
     mocks.startTracking.mockResolvedValue(true);
     mocks.getMe.mockResolvedValue(profile);
+    mocks.decline.mockResolvedValue(true);
+    useJobStore.getState().reset();
     useDriverStore.setState({ user: profile, isOnline: true, nightMode: false, isUpdatingOnline: false });
     useConnectionStore.setState({ connected: false, authentication: "checking", presence: "checking" });
   });
   afterEach(() => { if (screen) act(() => screen.unmount()); vi.useRealTimers(); });
+
+  const offered = (offerId: string) => ({ tripId: "trip", offerId, expiresAt: Date.now() + 30000,
+    vehicleType: "MOTO", serviceType: "PASSENGER", distance: 100,
+    pickup: { lat: 8, lng: 0, address: "Pickup" }, destination: { lat: 8, lng: 0, address: "Destination" },
+    customerName: "Test", customerPhone: "test" });
+
+  it("waits for decline confirmation, keeps failed declines retryable, and scopes replies to their offer", async () => {
+    await act(async () => { screen = create(<HomeScreen />); });
+    await act(async () => { mocks.handlers.offer(offered("first")); });
+    let finish!: (received: boolean) => void;
+    mocks.decline.mockReturnValue(new Promise(resolve => { finish = resolve; }));
+    let declining!: Promise<void>;
+    await act(async () => { declining = screen.root.findByType("Offer").props.onDecline(); });
+    expect(useJobStore.getState().isDeclining).toBe(true);
+    expect(useJobStore.getState().currentOffer?.offerId).toBe("first");
+    await act(async () => { finish(false); await declining; });
+    expect(useJobStore.getState().currentOffer?.offerId).toBe("first");
+    expect(useJobStore.getState().isDeclining).toBe(false);
+    mocks.decline.mockReturnValue(new Promise(resolve => { finish = resolve; }));
+    await act(async () => { declining = screen.root.findByType("Offer").props.onDecline(); });
+    await act(async () => { mocks.handlers.offer(offered("second")); finish(true); await declining; });
+    expect(useJobStore.getState().currentOffer?.offerId).toBe("second");
+    expect(useJobStore.getState().isDeclining).toBe(false);
+    mocks.decline.mockResolvedValue(true);
+    await act(async () => { await screen.root.findByType("Offer").props.onDecline(); });
+    expect(useJobStore.getState().currentOffer).toBeNull();
+  });
+
+  it("honours the server deadline and clears only the cancelled offer", async () => {
+    await act(async () => { screen = create(<HomeScreen />); });
+    const offer = { ...offered("current"), expiresAt: Date.now() + 10000, timeoutSeconds: 45 };
+    await act(async () => { mocks.handlers.offer(offer); });
+    expect(useJobStore.getState().currentOffer?.expiresAt).toBe(offer.expiresAt);
+    await act(async () => { mocks.handlers["trip:offer:cancelled"]({ tripId: "trip", offerId: "old" }); });
+    expect(useJobStore.getState().currentOffer?.offerId).toBe("current");
+    await act(async () => { mocks.handlers["trip:offer:cancelled"]({ tripId: "trip", offerId: "current" }); });
+    expect(useJobStore.getState().currentOffer).toBeNull();
+    expect(useDriverStore.getState().isOnline).toBe(true);
+  });
 
   it("does not claim readiness on initial failure, disconnect, or stale presence and preserves intent", async () => {
     mocks.connect.mockRejectedValue(new Error("backend unavailable"));

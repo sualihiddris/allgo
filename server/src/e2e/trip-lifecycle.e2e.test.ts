@@ -398,6 +398,71 @@ describe("Trip lifecycle E2E", () => {
     await redisModule.redis.quit();
   });
 
+  it("persists decline exhaustion, deduplicates customer results, and isolates a fresh retry", async () => {
+    await resetTripState();
+    const response = await request(httpServer).post("/api/v1/bookings/trip")
+      .set("Authorization", `Bearer ${customerToken}`)
+      .send({ vehicleType: "MOTO", serviceType: "PASSENGER", pickup: PICKUP, destination: DESTINATION });
+    expect(response.status).toBe(201);
+    const tripId = response.body.data.trip.id;
+    const outcomes: string[] = [];
+    const noDrivers = (data: { tripId: string }) => { if (data.tripId === tripId) outcomes.push("NO_DRIVERS"); };
+    const accepted = (data: { tripId: string }) => { if (data.tripId === tripId) outcomes.push("ACCEPTED"); };
+    customerSocket.on("trip:dispatch:no_drivers", noDrivers);
+    customerSocket.on("trip:accepted", accepted);
+    try {
+      const firstOffer = waitForEvent<{ tripId: string; offerId: string }>(driverSocket, "trip:offer");
+      customerSocket.emit("trip:dispatch", tripId);
+      customerSocket.emit("trip:dispatch", tripId);
+      const oldOffer = await firstOffer;
+      const declined = waitForEvent(driverSocket, "trip:decline:received");
+      const exhausted = waitForEvent(customerSocket, "trip:dispatch:no_drivers");
+      driverSocket.emit("trip:decline", oldOffer);
+      await declined; await exhausted;
+      const persisted = await prisma.trip.findUniqueOrThrow({ where: { id: tripId } });
+      expect(persisted).toMatchObject({ status: "REQUESTED", driverId: null, dispatchStatus: "NO_DRIVER_FOUND",
+        dispatchClaimToken: null, dispatchClaimedAt: null });
+      const recovered = await request(httpServer).get("/api/v1/bookings/trips/active")
+        .set("Authorization", `Bearer ${customerToken}`);
+      expect(recovered.body.data.trip.dispatchStatus).toBe("NO_DRIVER_FOUND");
+
+      const nextOffer = waitForEvent<{ tripId: string; offerId: string }>(driverSocket, "trip:offer");
+      customerSocket.emit("trip:dispatch", tripId);
+      const freshOffer = await nextOffer;
+      expect(freshOffer.offerId).not.toBe(oldOffer.offerId);
+      const late = waitForEvent(driverSocket, "trip:accept:failed");
+      driverSocket.emit("trip:accept", oldOffer); await late;
+      expect((await prisma.trip.findUniqueOrThrow({ where: { id: tripId } })).driverId).toBeNull();
+      const assigned = waitForEvent(customerSocket, "trip:accepted");
+      driverSocket.emit("trip:accept", freshOffer); await assigned;
+      expect(await prisma.trip.findUniqueOrThrow({ where: { id: tripId } })).toMatchObject({
+        status: "ACCEPTED", driverId: DRIVER_ID, dispatchStatus: null, dispatchClaimToken: null, dispatchClaimedAt: null,
+      });
+      expect(outcomes).toEqual(["NO_DRIVERS", "ACCEPTED"]);
+    } finally {
+      customerSocket.off("trip:dispatch:no_drivers", noDrivers);
+      customerSocket.off("trip:accepted", accepted);
+      await resetTripState();
+    }
+  });
+
+  it("persists zero-candidate exhaustion without changing REQUESTED", async () => {
+    await resetTripState();
+    await prisma.driver.update({ where: { id: DRIVER_ID }, data: { isOnline: false } });
+    try {
+      const response = await request(httpServer).post("/api/v1/bookings/trip")
+        .set("Authorization", `Bearer ${customerToken}`)
+        .send({ vehicleType: "MOTO", serviceType: "PASSENGER", pickup: PICKUP, destination: DESTINATION });
+      expect(response.status).toBe(201);
+      const tripId = response.body.data.trip.id;
+      const exhausted = waitForEvent(customerSocket, "trip:dispatch:no_drivers");
+      customerSocket.emit("trip:dispatch", tripId); await exhausted;
+      expect(await prisma.trip.findUniqueOrThrow({ where: { id: tripId } })).toMatchObject({
+        status: "REQUESTED", driverId: null, dispatchStatus: "NO_DRIVER_FOUND", dispatchClaimToken: null, dispatchClaimedAt: null,
+      });
+    } finally { await resetTripState(); }
+  });
+
   it(
     "creates, dispatches, accepts, starts, and completes exactly one trip",
     async () => {

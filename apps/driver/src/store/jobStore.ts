@@ -73,11 +73,11 @@ export const useJobStore = create<JobState>((set) => ({
   isAccepting: false,
   isDeclining: false,
   
-  setCurrentOffer: (offer) => set({ currentOffer: offer }),
+  setCurrentOffer: (offer) => set({ currentOffer: offer, isAccepting: false, isDeclining: false }),
   setActiveJob: (job) => set({ activeJob: job }),
   setIsAccepting: (loading) => set({ isAccepting: loading }),
   setIsDeclining: (loading) => set({ isDeclining: loading }),
-  clearOffer: () => set({ currentOffer: null }),
+  clearOffer: () => set({ currentOffer: null, isAccepting: false, isDeclining: false }),
   reset: () => set({
     currentOffer: null,
     activeJob: null,

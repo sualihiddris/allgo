@@ -40,6 +40,29 @@ describe("Driver connection evidence", () => {
   }
   function publish() { socketService.sendLocation({ lat: 8, lng: 0 }); }
 
+  it("waits for the matching decline acknowledgement and ignores old replies", async () => {
+    await connect();
+    const pending = socketService.declineTrip("trip", "current");
+    let done = false; void pending.then(() => { done = true; });
+    transport.emit("trip:decline:received", { tripId: "trip", offerId: "old" });
+    await Promise.resolve(); expect(done).toBe(false);
+    transport.emit("trip:decline:received", { tripId: "trip", offerId: "current" });
+    await expect(pending).resolves.toBe(true);
+    expect(transport.listenerCount("trip:decline:received")).toBe(0);
+    expect(transport.listenerCount("trip:decline:failed")).toBe(0);
+  });
+
+  it.each(["failed", "timeout", "disconnect"])("does not claim decline success on %s", async failure => {
+    await connect();
+    const pending = socketService.declineTrip("trip", "offer");
+    if (failure === "failed") transport.emit("trip:decline:failed", { tripId: "trip", offerId: "offer" });
+    if (failure === "disconnect") transport.offline();
+    if (failure === "timeout") await vi.advanceTimersByTimeAsync(5000);
+    await expect(pending).resolves.toBe(false);
+    expect(transport.listenerCount("trip:decline:received")).toBe(0);
+    expect(transport.listenerCount("trip:decline:failed")).toBe(0);
+  });
+
   it("keeps retrying an initial failure and uses current credentials on every handshake", async () => {
     const pending = socketService.connect();
     for (let i = 0; i < 7; i++) transport.emit("connect_error", new Error("transport error"));

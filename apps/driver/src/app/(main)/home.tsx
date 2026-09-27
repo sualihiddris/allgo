@@ -80,6 +80,10 @@ export default function HomeScreen() {
     let unsubscribeTripConfirmed: (() => void) | undefined;
     let unsubscribeTripAcceptFailed: (() => void) | undefined;
     let unsubscribeTripCancelled: (() => void) | undefined;
+    const offerCancelled = (data: { tripId: string; offerId: string }) => {
+      const offer = useJobStore.getState().currentOffer;
+      if (offer?.tripId === data.tripId && offer.offerId === data.offerId) clearOffer();
+    };
 
     const connectSocket = async () => {
       if (!isOnline) return;
@@ -89,12 +93,13 @@ export default function HomeScreen() {
         await socketService.connect();
 
         if (cancelled) return;
+        socketService.on("trip:offer:cancelled", offerCancelled);
 
         unsubscribeTripOffer = socketService.onTripOffer((offer) => {
           console.log("Received trip offer:", offer);
           setCurrentOffer({
             ...offer,
-            expiresAt: Date.now() + (offer.timeoutSeconds ?? 30) * 1000,
+            expiresAt: offer.expiresAt ?? Date.now() + (offer.timeoutSeconds ?? 30) * 1000,
           });
         });
 
@@ -175,6 +180,7 @@ export default function HomeScreen() {
       unsubscribeTripConfirmed?.();
       unsubscribeTripAcceptFailed?.();
       unsubscribeTripCancelled?.();
+      socketService.off("trip:offer:cancelled", offerCancelled);
       locationService.stopTracking();
       socketService.disconnect();
     };
@@ -277,17 +283,21 @@ export default function HomeScreen() {
   }, []);
 
   const handleAcceptOffer = () => {
-    if (!currentOffer) return;
+    if (!currentOffer || useJobStore.getState().isAccepting || useJobStore.getState().isDeclining) return;
+    if (Date.now() >= currentOffer.expiresAt) { clearOffer(); return; }
     setIsAccepting(true);
     socketService.acceptTrip(currentOffer.tripId, currentOffer.offerId);
   };
 
-  const handleDeclineOffer = () => {
-    if (!currentOffer) return;
+  const handleDeclineOffer = async () => {
+    if (!currentOffer || useJobStore.getState().isAccepting || useJobStore.getState().isDeclining) return;
+    if (Date.now() >= currentOffer.expiresAt) { clearOffer(); return; }
     setIsDeclining(true);
-    socketService.declineTrip(currentOffer.tripId, currentOffer.offerId);
-    clearOffer();
+    const received = await socketService.declineTrip(currentOffer.tripId, currentOffer.offerId);
+    if (useJobStore.getState().currentOffer?.offerId !== currentOffer.offerId) return;
     setIsDeclining(false);
+    if (received || Date.now() >= currentOffer.expiresAt) clearOffer();
+    else Alert.alert("Decline not confirmed", "Please try again. This offer will expire automatically.");
   };
 
   const isApproved = !!user?.driver?.isApproved;

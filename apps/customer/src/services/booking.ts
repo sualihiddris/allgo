@@ -81,10 +81,11 @@ export const bookingService = {
     return data.data;
   },
 
-  async getTrip(tripId: string) {
+  async getTrip(tripId: string, signal?: AbortSignal) {
     const token = await authService.getAccessToken();
     
     const response = await fetch(`${API_URL}/bookings/trip/${tripId}`, {
+      signal,
       headers: {
         Authorization: `Bearer ${token}`,
       },
