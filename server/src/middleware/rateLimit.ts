@@ -23,7 +23,11 @@ export function rateLimit(options: RateLimitOptions) {
         await redis.pexpire(key, windowMs);
       }
       
-      const ttl = await redis.pttl(key);
+      let ttl = await redis.pttl(key);
+      if (ttl === -1) {
+        await redis.pexpire(key, windowMs);
+        ttl = await redis.pttl(key);
+      }
       
       res.setHeader("X-RateLimit-Limit", max);
       res.setHeader("X-RateLimit-Remaining", Math.max(0, max - current));
