@@ -115,7 +115,8 @@ const pendingResponses = new Map<
     tripId: string;
     driverId: string;
     offered: boolean;
-    resolve: (response: PendingDriverOfferOutcome) => void;
+    expiresAt: number;
+    resolve: (response: DriverOfferWaitResult) => void;
   }
 >();
 
@@ -127,6 +128,14 @@ function resolvePendingDriverResponse(event: DistributedDriverResponse): boolean
     pending.tripId !== event.tripId ||
     pending.driverId !== event.driverId
   ) {
+    return false;
+  }
+
+  if (!pending.offered) return false;
+  // Timer callbacks can be delayed by a busy process. The deadline, not
+  // callback scheduling order, decides whether a response is still valid.
+  if (Date.now() >= pending.expiresAt) {
+    pending.resolve("timeout");
     return false;
   }
 
@@ -394,6 +403,9 @@ export async function setupSocketIO(httpServer: HTTPServer): Promise<Server> {
      * next-nearest driver is tried, expanding the search radius once the
      * current tier is exhausted. See AllGO_Master_Plan.md Section 3.
      */
+    // This guard deduplicates replies to this socket, not dispatch ownership.
+    // The database lease and dispatchTrip() still arbitrate the actual work.
+    const dispatchRequests = new Set<string>();
     socket.on("trip:dispatch", async (tripId: string) => {
       const rejectDispatch = () =>
         socket.emit("trip:dispatch:failed", {
@@ -414,6 +426,8 @@ export async function setupSocketIO(httpServer: HTTPServer): Promise<Server> {
         return;
       }
 
+      if (dispatchRequests.has(tripId)) return;
+      dispatchRequests.add(tripId);
       try {
         const ownedTrip = await prisma.trip.findFirst({
           where: {
@@ -458,6 +472,8 @@ export async function setupSocketIO(httpServer: HTTPServer): Promise<Server> {
           error
         );
         rejectDispatch();
+      } finally {
+        dispatchRequests.delete(tripId);
       }
     });
 
@@ -541,7 +557,9 @@ export async function setupSocketIO(httpServer: HTTPServer): Promise<Server> {
         !tripId ||
         !offerId
       ) {
-        return;
+        return socket.emit("trip:decline:failed", {
+          tripId, offerId, reason: "Offer expired or no longer available",
+        });
       }
 
       try {
@@ -563,6 +581,7 @@ export async function setupSocketIO(httpServer: HTTPServer): Promise<Server> {
         socket.emit("trip:decline:received", { tripId, offerId });
       } catch (error) {
         console.error("Error declining trip:", error);
+        socket.emit("trip:decline:failed", { tripId, offerId, reason: "Unable to process response" });
       }
     });
 
@@ -658,6 +677,7 @@ async function resolveDispatchOwnershipLoss(
 
 async function dispatchTripInternal(tripId: string): Promise<DispatchTripResult> {
   let dispatchClaimToken: string | null = null;
+  let pendingOfferId: string | null = null;
 
   try {
     const io = getIO();
@@ -789,6 +809,7 @@ async function dispatchTripInternal(tripId: string): Promise<DispatchTripResult>
         }
 
         const offerId = randomUUID();
+        pendingOfferId = offerId;
 
         // Register the pending offer before the final authoritative
         // read. If cancellation commits while this read is awaiting,
@@ -864,6 +885,7 @@ async function dispatchTripInternal(tripId: string): Promise<DispatchTripResult>
             trip.customer?.user?.phone || trip.callerPhone || "",
           customerNote: trip.customerNote,
           timeoutSeconds: jobTimeoutSeconds,
+          expiresAt: pendingOffer.expiresAt,
         });
 
         prisma.driver
@@ -877,7 +899,7 @@ async function dispatchTripInternal(tripId: string): Promise<DispatchTripResult>
 
             if (
               candidateDriver?.pushToken &&
-              activeOffer?.offered
+              activeOffer?.offered && Date.now() < activeOffer.expiresAt
             ) {
               return sendPushNotification(
                 candidateDriver.pushToken,
@@ -892,6 +914,7 @@ async function dispatchTripInternal(tripId: string): Promise<DispatchTripResult>
           );
 
         const response = await responsePromise;
+        pendingOfferId = null;
 
         console.log(
           `[Dispatch] Trip ${tripId}: driver ${candidate.driverId} responded "${response}"`
@@ -999,6 +1022,9 @@ async function dispatchTripInternal(tripId: string): Promise<DispatchTripResult>
     }
 
     return { status: "FAILED", reason: "Server error" };
+  } finally {
+    // Includes a thrown pre-offer DB fence: no orphaned response or timer.
+    if (pendingOfferId) pendingResponses.get(pendingOfferId)?.resolve("cancelled");
   }
 }
 
@@ -1026,6 +1052,7 @@ function waitForDriverResponse(
       tripId,
       driverId,
       offered: false,
+      expiresAt: Date.now() + timeoutSeconds * 1000,
       resolve: (response) => {
         clearTimeout(timeout);
         pendingResponses.delete(offerId);

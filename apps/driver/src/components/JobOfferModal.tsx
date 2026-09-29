@@ -11,7 +11,6 @@ import {
 } from "react-native";
 import { COLORS, SPACING } from "../constants/config";
 import { useJobStore } from "../store/jobStore";
-import { isNightServiceHours } from "@allgo/shared/constants/nightService";
 
 interface JobOfferModalProps {
   visible: boolean;
@@ -40,11 +39,9 @@ export default function JobOfferModal({
 }: JobOfferModalProps) {
   const { currentOffer, isAccepting, isDeclining } = useJobStore();
 
-  // Section 20: Dynamic timeout - 45s for night, 30s for day.
-  const countdownDuration = isNightServiceHours() ? 45 : 30;
-  const [countdown, setCountdown] = useState(countdownDuration);
+  const remaining = () => Math.max(0, Math.ceil(((currentOffer?.expiresAt ?? 0) - Date.now()) / 1000));
+  const [countdown, setCountdown] = useState(remaining);
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
-  const countdownRef = useRef(countdownDuration);
   const autoDeclinedRef = useRef(false);
 
   useEffect(() => {
@@ -52,14 +49,11 @@ export default function JobOfferModal({
       return;
     }
 
-    const duration = isNightServiceHours() ? 45 : 30;
-    countdownRef.current = duration;
     autoDeclinedRef.current = false;
-    setCountdown(duration);
+    setCountdown(remaining());
 
     intervalRef.current = setInterval(() => {
-      countdownRef.current = Math.max(0, countdownRef.current - 1);
-      setCountdown((prev) => Math.max(0, prev - 1));
+      setCountdown(remaining());
     }, 1000);
 
     return () => {
@@ -68,10 +62,10 @@ export default function JobOfferModal({
         intervalRef.current = null;
       }
     };
-  }, [visible]);
+  }, [visible, currentOffer?.offerId, currentOffer?.expiresAt]);
 
   useEffect(() => {
-    if (visible && countdown === 0 && !autoDeclinedRef.current) {
+    if (visible && countdown === 0 && currentOffer && Date.now() >= currentOffer.expiresAt && !autoDeclinedRef.current) {
       autoDeclinedRef.current = true;
 
       if (intervalRef.current) {
@@ -81,7 +75,7 @@ export default function JobOfferModal({
 
       onDecline();
     }
-  }, [countdown, visible, onDecline]);
+  }, [countdown, visible, onDecline, currentOffer?.offerId, currentOffer?.expiresAt]);
 
   if (!currentOffer) return null;
 

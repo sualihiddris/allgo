@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createServer } from "http";
 
 const mocks = vi.hoisted(() => ({
@@ -178,6 +178,174 @@ describe("dispatchTrip", () => {
       driverId: "driver-1",
     });
     await setupSocketIO(createServer());
+  });
+
+  afterEach(() => { revokePendingTripOffers("trip-1"); vi.useRealTimers(); });
+
+  function peer(role: string, id: string) {
+    const handlers: Record<string, (payload: any) => Promise<void>> = {};
+    const socket = { role, userId: id, driverId: id, join: vi.fn(), emit: vi.fn(),
+      on: (event: string, handler: any) => { handlers[event] = handler; } };
+    ioMock.getConnectionHandler()!(socket);
+    return { socket, handlers };
+  }
+  const flush = async () => { for (let i = 0; i < 30; i++) await Promise.resolve(); };
+  const offers = () => ioMock.emissions.filter(e => e.event === "trip:offer").map(e => ({
+    ...(e.payload as { tripId: string; offerId: string }), driverId: e.room.slice(7),
+  }));
+
+  it.each(["NO_DRIVERS", "FAILED", "ACCEPTED"])("emits one customer result for duplicate dispatch: %s", async outcome => {
+    vi.useFakeTimers();
+    mocks.getJobTimeout.mockReturnValue(30);
+    mocks.findNearbyDrivers.mockImplementation(async () => {
+      if (outcome === "FAILED") throw new Error("unavailable");
+      return outcome === "ACCEPTED" ? [{ driverId: "driver-1" }] : [];
+    });
+    mocks.assignTripToDriver.mockResolvedValue({ driver: {
+      id: "driver-1", vehicleType: "MOTO", licensePlate: "test", user: { name: "Test", phone: "test" },
+    } });
+    const customer = peer("CUSTOMER", "customer-1");
+    const first = customer.handlers["trip:dispatch"]("trip-1");
+    const second = customer.handlers["trip:dispatch"]("trip-1");
+    await flush();
+    if (outcome === "ACCEPTED") {
+      ioMock.getServerSideHandler("dispatch:driver-response")!({ ...offers()[0], response: "accept" });
+    }
+    await Promise.all([first, second]);
+    expect(customer.socket.emit).toHaveBeenCalledTimes(1);
+    expect(mocks.getTripById).toHaveBeenCalledTimes(1);
+    expect(mocks.assignTripToDriver).toHaveBeenCalledTimes(outcome === "ACCEPTED" ? 1 : 0);
+  });
+
+  it.each(["decline", "timeout"])("offers sequentially and exhausts once after every %s", async response => {
+    vi.useFakeTimers();
+    mocks.getJobTimeout.mockReturnValue(30);
+    mocks.getSearchRadii.mockReturnValue([2000, 5000, 8000]);
+    mocks.findNearbyDrivers.mockResolvedValue([{ driverId: "driver-1" }, { driverId: "driver-2" }]);
+    const result = dispatchTrip("trip-1");
+    await flush();
+    expect(offers()).toHaveLength(1);
+    const reply = ioMock.getServerSideHandler("dispatch:driver-response")!;
+    for (let i = 0; i < 2; i++) {
+      const offer = offers()[i];
+      if (response === "timeout") await vi.advanceTimersByTimeAsync(30000);
+      else { expect(reply({ ...offer, response })).toBe(true); await flush(); }
+      expect(reply({ ...offer, response: "accept" })).toBe(false);
+      expect(reply({ ...offer, response: "decline" })).toBe(false);
+    }
+    await expect(result).resolves.toMatchObject({ status: "NO_DRIVERS" });
+    expect(offers().map(o => o.driverId)).toEqual(["driver-1", "driver-2"]);
+    expect(mocks.tripUpdateMany).toHaveBeenLastCalledWith(expect.objectContaining({ data: {
+      dispatchStatus: "NO_DRIVER_FOUND", dispatchClaimToken: null, dispatchClaimedAt: null,
+    } }));
+    expect(mocks.assignTripToDriver).not.toHaveBeenCalled();
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it("rejects responses past the deadline even before the timer callback runs", async () => {
+    vi.useFakeTimers();
+    mocks.getJobTimeout.mockReturnValue(30);
+    mocks.findNearbyDrivers.mockResolvedValue([{ driverId: "driver-1" }]);
+    const result = dispatchTrip("trip-1");
+    await flush();
+    vi.setSystemTime(Date.now() + 30001);
+    const accepted = ioMock.getServerSideHandler("dispatch:driver-response")!({ ...offers()[0], response: "accept" });
+    revokePendingTripOffers("trip-1");
+    await result;
+    expect(accepted).toBe(false);
+    expect(mocks.assignTripToDriver).not.toHaveBeenCalled();
+  });
+
+  it("cleans the pending offer when the final database fence throws", async () => {
+    vi.useFakeTimers();
+    mocks.getJobTimeout.mockReturnValue(30);
+    mocks.findNearbyDrivers.mockResolvedValue([{ driverId: "driver-1" }]);
+    mocks.tripFindFirst.mockRejectedValueOnce(new Error("DB unavailable"));
+    await expect(dispatchTrip("trip-1")).resolves.toMatchObject({ status: "FAILED" });
+    expect(offers()).toHaveLength(0);
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it.each(["decline", "timeout"])("%s moves to B; late, wrong-driver and duplicate responses cannot change the winner", async response => {
+    vi.useFakeTimers(); mocks.getJobTimeout.mockReturnValue(30);
+    mocks.findNearbyDrivers.mockResolvedValue([{ driverId: "driver-1" }, { driverId: "driver-2" }]);
+    mocks.assignTripToDriver.mockResolvedValue({ driver: { id: "driver-2", vehicleType: "MOTO", licensePlate: "test",
+      user: { name: "Test", phone: "test" } } });
+    mocks.tripFindUnique.mockResolvedValue({ status: "ACCEPTED", driverId: "driver-2" });
+    const driverA = peer("DRIVER", "driver-1");
+    const result = dispatchTrip("trip-1"); await flush();
+    const first = offers()[0];
+    if (response === "decline") await driverA.handlers["trip:decline"](first);
+    else {
+      await driverA.handlers.disconnect(undefined);
+      expect(offers()).toHaveLength(1);
+      await vi.advanceTimersByTimeAsync(30000);
+    }
+    await flush();
+    const second = offers()[1];
+    expect(second.driverId).toBe("driver-2");
+    expect(second.offerId).not.toBe(first.offerId);
+    for (const event of ["trip:accept", "trip:decline"]) {
+      await driverA.handlers[event](first);
+      expect(driverA.socket.emit).toHaveBeenLastCalledWith(`${event}:failed`, expect.objectContaining({ offerId: first.offerId }));
+      await driverA.handlers[event](second);
+      expect(driverA.socket.emit).toHaveBeenLastCalledWith(`${event}:failed`, expect.objectContaining({ offerId: second.offerId }));
+    }
+    const reply = ioMock.getServerSideHandler("dispatch:driver-response")!;
+    expect(reply({ ...second, response: "accept" })).toBe(true);
+    expect(reply({ ...second, response: "accept" })).toBe(false);
+    expect(reply({ ...second, response: "decline" })).toBe(false);
+    await expect(result).resolves.toMatchObject({ status: "ACCEPTED", driver: { id: "driver-2" } });
+    expect(mocks.assignTripToDriver).toHaveBeenCalledTimes(1);
+    expect(reply({ ...first, response: "accept" })).toBe(false);
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it("retry after exhaustion uses a new claim and offer, ignoring every old response", async () => {
+    vi.useFakeTimers(); mocks.getJobTimeout.mockReturnValue(30);
+    mocks.findNearbyDrivers.mockResolvedValue([{ driverId: "driver-1" }]);
+    const first = dispatchTrip("trip-1"); await flush();
+    const oldOffer = offers()[0];
+    const reply = ioMock.getServerSideHandler("dispatch:driver-response")!;
+    reply({ ...oldOffer, response: "decline" });
+    await expect(first).resolves.toMatchObject({ status: "NO_DRIVERS" });
+    const retry = dispatchTrip("trip-1"); await flush();
+    const newOffer = offers()[1];
+    expect(newOffer.offerId).not.toBe(oldOffer.offerId);
+    expect(reply({ ...oldOffer, response: "accept" })).toBe(false);
+    expect(reply({ ...oldOffer, response: "decline" })).toBe(false);
+    expect(reply({ ...newOffer, response: "decline" })).toBe(true);
+    await expect(retry).resolves.toMatchObject({ status: "NO_DRIVERS" });
+    const claims = mocks.tripUpdateMany.mock.calls.filter(([arg]) => arg.data.dispatchStatus === "SEARCHING");
+    expect(claims).toHaveLength(2);
+    expect(claims[0][0].data.dispatchClaimToken).not.toBe(claims[1][0].data.dispatchClaimToken);
+    expect(offers()).toHaveLength(2);
+  });
+
+  it.each([false, true])("push failure=%s does not create a second offer or alter timeout cleanup", async fails => {
+    vi.useFakeTimers(); mocks.getJobTimeout.mockReturnValue(45);
+    mocks.findNearbyDrivers.mockResolvedValue([{ driverId: "driver-1" }]);
+    mocks.driverFindUnique.mockResolvedValue({ id: "driver-1", pushToken: "fixture" });
+    mocks.sendPushNotification.mockImplementation(async () => { if (fails) throw new Error("push failed"); });
+    const result = dispatchTrip("trip-1"); await flush();
+    expect(offers()).toHaveLength(1);
+    expect(mocks.sendPushNotification).toHaveBeenCalledWith("fixture", expect.any(String), expect.any(String), {
+      tripId: "trip-1", offerId: offers()[0].offerId,
+    });
+    await vi.advanceTimersByTimeAsync(44999);
+    expect(mocks.tripUpdateMany).not.toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ dispatchStatus: "NO_DRIVER_FOUND" }) }));
+    await vi.advanceTimersByTimeAsync(1);
+    await expect(result).resolves.toMatchObject({ status: "NO_DRIVERS" });
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it("skips unavailable drivers and checks every radius before persisting no drivers", async () => {
+    mocks.getSearchRadii.mockReturnValue([2000, 5000, 8000]);
+    mocks.findNearbyDrivers.mockResolvedValue([{ driverId: "driver-1" }]);
+    mocks.isDriverAvailable.mockResolvedValue(false);
+    await expect(dispatchTrip("trip-1")).resolves.toMatchObject({ status: "NO_DRIVERS" });
+    expect(mocks.findNearbyDrivers.mock.calls.map(call => call[3])).toEqual([2000, 5000, 8000]);
+    expect(offers()).toHaveLength(0);
   });
 
   it("returns NO_DRIVERS after exhausting candidates", async () => {
